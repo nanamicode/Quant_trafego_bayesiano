@@ -6,7 +6,14 @@ import numpy as np
 import pandas as pd
 
 from .dynamic import analyze_state_space_temporal
-from .model import BetaPosterior, aggregate, shrink_to, simulate_action, update_beta
+from .model import (
+    BetaPosterior,
+    aggregate,
+    sample_simulation_context,
+    shrink_to,
+    simulate_action,
+    update_beta,
+)
 from .quality import assess_data_quality
 from .response import ResponseEstimate, estimate_response
 from .temporal import analyze_temporal
@@ -68,7 +75,13 @@ class BayesTrafficEngine:
             raise ValueError("contribution_margin deve estar entre 0 e 1.")
         if self.config.temporal_model not in {"derivative", "state_space"}:
             raise ValueError("temporal_model deve ser derivative ou state_space.")
-        self.rng = np.random.default_rng(self.config.seed)
+        actions = np.asarray(self.config.actions, dtype=float)
+        if np.any(actions < 0):
+            raise ValueError("Multiplicadores de ação não podem ser negativos.")
+        if len(np.unique(np.round(actions, 12))) != len(actions):
+            raise ValueError("A grade de ações contém multiplicadores duplicados.")
+        if not np.any(np.isclose(actions, 1.0)):
+            raise ValueError("A grade de ações deve conter 1.0x como baseline hold.")
 
     def validate(self, df: pd.DataFrame) -> pd.DataFrame:
         missing = [c for c in REQUIRED if c not in df.columns]
@@ -114,6 +127,14 @@ class BayesTrafficEngine:
             digest_size=4,
         ).digest()
         return int.from_bytes(digest, "little") % 100_000
+
+    @staticmethod
+    def _action_offset(multiplier: float) -> int:
+        digest = hashlib.blake2b(
+            f"{float(multiplier):.8f}".encode("utf-8"),
+            digest_size=4,
+        ).digest()
+        return int.from_bytes(digest, "little") % 1_000_000
 
     @staticmethod
     def _get_override(overrides, level, entity_id, fallback):
@@ -196,8 +217,37 @@ class BayesTrafficEngine:
             response_estimate.confidence if self.config.use_empirical_response else 0.0
         )
 
+        entity_seed = (
+            self.config.seed
+            + self._stable_offset(
+                level,
+                str(entity_id),
+            )
+        )
+        context = sample_simulation_context(
+            stats=stats,
+            ctr_post=ctr_post,
+            cvr_post=cvr_post,
+            draws=self.config.draws,
+            horizon_days=self.config.horizon_days,
+            rng=np.random.default_rng(
+                entity_seed + 1_000_003
+            ),
+            temporal_ctr_slope_mean=ctr_mean,
+            temporal_ctr_slope_sd=ctr_sd,
+            temporal_cvr_slope_mean=cvr_mean,
+            temporal_cvr_slope_sd=cvr_sd,
+            response_elasticity_mean=response_estimate.elasticity_mean,
+            response_elasticity_sd=response_estimate.elasticity_sd,
+        )
+
         sims = []
         for action in self.config.actions:
+            action_rng = np.random.default_rng(
+                entity_seed
+                + 2_000_003
+                + self._action_offset(action)
+            )
             sims.append(
                 simulate_action(
                     stats=stats,
@@ -208,7 +258,7 @@ class BayesTrafficEngine:
                     horizon_days=self.config.horizon_days,
                     target_roas=self.config.target_roas,
                     contribution_margin=self.config.contribution_margin,
-                    rng=self.rng,
+                    rng=action_rng,
                     saturation_half=self.config.saturation_half,
                     saturation_slope=self.config.saturation_slope,
                     temporal_ctr_slope_mean=ctr_mean,
@@ -218,6 +268,7 @@ class BayesTrafficEngine:
                     response_elasticity_mean=response_estimate.elasticity_mean,
                     response_elasticity_sd=response_estimate.elasticity_sd,
                     response_confidence=response_confidence,
+                    context=context,
                 )
             )
 
