@@ -2,6 +2,7 @@ import pandas as pd
 
 from quant_trafego.portfolio import (
     PortfolioRiskConfig,
+    estimate_campaign_correlation,
     optimize_campaign_portfolio,
 )
 
@@ -67,3 +68,37 @@ def test_portfolio_optimizer_respects_budget_and_reports_joint_cvar():
     assert summary["scenario_count"] == 200
     assert 0 <= summary["scenario_p_profit"] <= 1
     assert summary["scenario_portfolio_cvar"] <= summary["scenario_profit_p50"]
+
+
+def test_pairwise_correlation_is_shrunk_by_actual_overlap():
+    rows = []
+    for day in range(100):
+        date = pd.Timestamp("2026-01-01") + pd.Timedelta(days=day)
+        rows.append(
+            {
+                "date": date,
+                "campaign_id": "c1",
+                "spend": 100.0,
+                "revenue": 200.0 + day,
+            }
+        )
+        if day >= 95:
+            rows.append(
+                {
+                    "date": date,
+                    "campaign_id": "c2",
+                    "spend": 100.0,
+                    "revenue": 300.0 + 2 * day,
+                }
+            )
+
+    corr, n_days = estimate_campaign_correlation(
+        pd.DataFrame(rows),
+        ["c1", "c2"],
+        contribution_margin=1.0,
+        shrinkage_days=20.0,
+    )
+    assert n_days == 100
+    # Raw overlap correlation is nearly one, but only five shared days
+    # exist, so pair-specific shrinkage must keep dependence conservative.
+    assert 0.0 < corr[0, 1] < 0.35
