@@ -33,21 +33,25 @@ def _nearest_psd_correlation(corr: np.ndarray) -> np.ndarray:
     return psd
 
 
-def estimate_campaign_correlation(
+def _estimate_campaign_correlation_details(
     df: pd.DataFrame,
     campaign_ids: list[str],
     *,
     contribution_margin: float,
     shrinkage_days: float = 20.0,
-) -> tuple[np.ndarray, int]:
+) -> tuple[np.ndarray, int, np.ndarray]:
     daily = (
         df.groupby(["date", "campaign_id"], as_index=False)
-        .agg(spend=("spend", "sum"), revenue=("revenue", "sum"))
+        .agg(
+            spend=("spend", "sum"),
+            revenue=("revenue", "sum"),
+        )
         .copy()
     )
     daily["campaign_id"] = daily["campaign_id"].astype(str)
     daily["profit"] = (
-        daily["revenue"] * float(contribution_margin) - daily["spend"]
+        daily["revenue"] * float(contribution_margin)
+        - daily["spend"]
     )
     pivot = daily.pivot(
         index="date",
@@ -56,8 +60,13 @@ def estimate_campaign_correlation(
     ).reindex(columns=campaign_ids)
 
     n_days = int(len(pivot))
-    if len(campaign_ids) <= 1 or n_days < 5:
-        return np.eye(len(campaign_ids)), n_days
+    n_campaigns = len(campaign_ids)
+    if n_campaigns <= 1 or n_days < 5:
+        return (
+            np.eye(n_campaigns),
+            n_days,
+            np.full((n_campaigns, n_campaigns), n_days, dtype=int),
+        )
 
     standardized = pivot.copy()
     for col in standardized.columns:
@@ -65,20 +74,79 @@ def estimate_campaign_correlation(
         mean = x.mean()
         sd = x.std(ddof=1)
         if not np.isfinite(sd) or sd <= 1e-9:
-            standardized[col] = 0.0
+            standardized[col] = np.nan
         else:
             standardized[col] = (x - mean) / sd
 
-    corr_df = standardized.corr(min_periods=5)
-    corr = corr_df.to_numpy(dtype=float)
-    corr = np.where(np.isfinite(corr), corr, 0.0)
-    np.fill_diagonal(corr, 1.0)
+    values = standardized.to_numpy(dtype=float)
+    corr = np.eye(n_campaigns, dtype=float)
+    overlap = np.zeros((n_campaigns, n_campaigns), dtype=int)
 
-    shrink = float(
-        np.clip(n_days / (n_days + max(shrinkage_days, 1.0)), 0.0, 0.95)
+    for i in range(n_campaigns):
+        valid_i = np.isfinite(values[:, i])
+        overlap[i, i] = int(valid_i.sum())
+
+        for j in range(i + 1, n_campaigns):
+            valid = (
+                np.isfinite(values[:, i])
+                & np.isfinite(values[:, j])
+            )
+            n_overlap = int(valid.sum())
+            overlap[i, j] = n_overlap
+            overlap[j, i] = n_overlap
+
+            if n_overlap < 5:
+                shrunk = 0.0
+            else:
+                raw = float(
+                    np.corrcoef(
+                        values[valid, i],
+                        values[valid, j],
+                    )[0, 1]
+                )
+                if not np.isfinite(raw):
+                    raw = 0.0
+
+                # Pair-specific empirical shrinkage. A correlation estimated
+                # from 5 overlapping days should never receive the same trust
+                # as one estimated from 60 overlapping days.
+                shrink = float(
+                    np.clip(
+                        n_overlap
+                        / (
+                            n_overlap
+                            + max(shrinkage_days, 1.0)
+                        ),
+                        0.0,
+                        0.95,
+                    )
+                )
+                shrunk = shrink * raw
+
+            corr[i, j] = shrunk
+            corr[j, i] = shrunk
+
+    return (
+        _nearest_psd_correlation(corr),
+        n_days,
+        overlap,
     )
-    corr = shrink * corr + (1.0 - shrink) * np.eye(len(campaign_ids))
-    return _nearest_psd_correlation(corr), n_days
+
+
+def estimate_campaign_correlation(
+    df: pd.DataFrame,
+    campaign_ids: list[str],
+    *,
+    contribution_margin: float,
+    shrinkage_days: float = 20.0,
+) -> tuple[np.ndarray, int]:
+    corr, n_days, _ = _estimate_campaign_correlation_details(
+        df,
+        campaign_ids,
+        contribution_margin=contribution_margin,
+        shrinkage_days=shrinkage_days,
+    )
+    return corr, n_days
 
 
 def _action_scenarios(
@@ -196,7 +264,7 @@ def optimize_campaign_portfolio(
             )
     total_budget = max(float(total_budget), 0.0)
 
-    corr, correlation_days = estimate_campaign_correlation(
+    corr, correlation_days, pair_overlap = _estimate_campaign_correlation_details(
         historical_df,
         campaign_ids,
         contribution_margin=contribution_margin,
@@ -303,10 +371,25 @@ def optimize_campaign_portfolio(
     tail_values = portfolio_scenarios[portfolio_scenarios <= q]
     cvar = float(tail_values.mean()) if len(tail_values) else q
 
+    off_diag_overlap = pair_overlap[
+        ~np.eye(len(campaign_ids), dtype=bool)
+    ]
+    positive_overlap = off_diag_overlap[off_diag_overlap > 0]
+
     summary = {
         "solver": "scipy_milp_highs_cvar",
         "dependence_model": "shrunk_historical_correlation_gaussian_copula",
         "correlation_history_days": correlation_days,
+        "correlation_pair_overlap_min_days": (
+            int(positive_overlap.min())
+            if len(positive_overlap)
+            else correlation_days
+        ),
+        "correlation_pair_overlap_median_days": (
+            float(np.median(positive_overlap))
+            if len(positive_overlap)
+            else float(correlation_days)
+        ),
         "scenario_count": n_scenarios,
         "cvar_alpha": risk_cfg.cvar_alpha,
         "cvar_weight": risk_cfg.cvar_weight,
