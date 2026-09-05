@@ -53,6 +53,7 @@ class EngineConfig:
     temporal_model: str = "derivative"
     use_empirical_response: bool = True
     use_weekly_seasonality: bool = True
+    attribution_safe_cvr_temporal: bool = True
     seasonality_half_life_days: float = 56.0
     seasonality_min_days: int = 21
     predictive_max_multiplier: float = 1.20
@@ -455,8 +456,22 @@ class BayesTrafficEngine:
 
         ctr_mean = temporal.ctr.effective_mean if self.config.use_temporal else 0.0
         ctr_sd = temporal.ctr.effective_sd if self.config.use_temporal else 0.0
-        cvr_mean = temporal.cvr.effective_mean if self.config.use_temporal else 0.0
-        cvr_sd = temporal.cvr.effective_sd if self.config.use_temporal else 0.0
+
+        if (
+            self.config.use_temporal
+            and not self.config.attribution_safe_cvr_temporal
+        ):
+            cvr_mean = temporal.cvr.effective_mean
+            cvr_sd = temporal.cvr.effective_sd
+        else:
+            # Meta's attributed purchases do not belong to a literal same-day
+            # click funnel. Recent aggregate level is useful, but extrapolating
+            # a daily CVR derivative is not sufficiently identified.
+            cvr_mean = 0.0
+            cvr_sd = 0.0
+            if self.config.attribution_safe_cvr_temporal:
+                cvr_weekly_mean = 0.0
+                cvr_weekly_sd = 0.0
 
         if (
             self.config.use_temporal
@@ -617,6 +632,11 @@ class BayesTrafficEngine:
                 "cvr_current_logit_shift": current_cvr_shift,
                 "temporal_projection_days": float(
                     self.config.temporal_projection_days
+                ),
+                "cvr_temporal_mode": (
+                    "recent_level_only"
+                    if self.config.attribution_safe_cvr_temporal
+                    else "daily_derivative"
                 ),
                 "p_recent_ctr_better": temporal.p_recent_ctr_better,
                 "p_recent_cvr_better": temporal.p_recent_cvr_better,
