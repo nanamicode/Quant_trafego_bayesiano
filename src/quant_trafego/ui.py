@@ -175,6 +175,8 @@ def main():
 
             diagnostics = None
             ppc_summary = None
+            deep_decision_source = None
+            deep_guardrail = None
             if inference_mode == "MCMC hierárquico profundo":
                 st.write(
                     "Ajustando posterior hierárquico completo e conectando-o "
@@ -195,6 +197,8 @@ def main():
                 best = result.best_actions
                 diagnostics = result.diagnostics
                 ppc_summary = result.ppc_summary
+                deep_decision_source = result.decision_source
+                deep_guardrail = result.guardrail
             else:
                 st.write(
                     "Estimando posteriores hierárquicos, derivadas temporais, "
@@ -267,6 +271,8 @@ def main():
                     ),
                     "temporal_model_decision": model_decision,
                     "allocation_summary": allocation_summary,
+                    "deep_decision_source": deep_decision_source,
+                    "deep_guardrail": deep_guardrail,
                 },
             )
             workspace = LocalWarehouse("workspace")
@@ -284,6 +290,8 @@ def main():
                 extra_json["allocation_summary"] = allocation_summary
             if diagnostics is not None:
                 extra_tables["posterior_predictive_checks"] = result.ppc_detail
+                if result.guardrail != "none":
+                    extra_tables["mcmc_candidate_actions"] = result.candidate_mcmc_actions
             run_dir = workspace.persist_run(
                 df,
                 manifest,
@@ -298,6 +306,13 @@ def main():
 
         if diagnostics is not None:
             st.subheader("Diagnóstico MCMC")
+            if deep_guardrail != "none":
+                st.warning(
+                    f"Guardrail profundo ativo: {deep_guardrail}. "
+                    f"Fonte decisória: {deep_decision_source}."
+                )
+            else:
+                st.caption(f"Fonte decisória profunda: {deep_decision_source}")
             d1, d2, d3, d4 = st.columns(4)
             d1.metric("Método", diagnostics.method.upper())
             d2.metric(
