@@ -32,6 +32,7 @@ def compare_temporal_models(
     horizon_days: int | None = None,
     step_days: int = 7,
     minimum_improvement: float = 0.02,
+    levels: tuple[str, ...] = ("account", "campaign"),
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     base = config or EngineConfig()
 
@@ -45,6 +46,7 @@ def compare_temporal_models(
             min_train_days=min_train_days,
             horizon_days=horizon_days,
             step_days=step_days,
+            levels=levels,
         )
         details[model] = detail
         summaries[model] = summary
