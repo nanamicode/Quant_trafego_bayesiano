@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, replace
+import json
 from pathlib import Path
 import tempfile
 
@@ -12,11 +13,13 @@ from quant_trafego.funnel import detect_funnel_schema, hierarchical_funnel_diagn
 from quant_trafego.hardware import detect_hardware
 from quant_trafego.io import filter_decision_rows, infer_decision_universe, load_ads_file
 from quant_trafego.model_selection import compare_temporal_models
+from quant_trafego.observability import RunTelemetry
 from quant_trafego.optimization import optimize_adset_allocation, optimize_campaign_allocation
 from quant_trafego.portfolio import optimize_campaign_portfolio
 from quant_trafego.quality import assess_data_quality
 from quant_trafego.reproducibility import build_run_manifest
 from quant_trafego.storage import LocalWarehouse
+from quant_trafego.ui_observability import RunMonitor
 
 
 DEPTHS = {
@@ -144,18 +147,46 @@ def main():
 
     try:
         with st.status("Executando análise local...", expanded=True) as status:
-            st.write("Lendo e normalizando a planilha...")
+            telemetry = RunTelemetry()
+            monitor = RunMonitor(
+                validate_temporal=bool(validate_temporal),
+                deep_mode=(
+                    inference_mode
+                    == "MCMC hierárquico profundo"
+                ),
+                telemetry=telemetry,
+            )
+            monitor.update(
+                "load",
+                0.05,
+                "Lendo arquivo enviado...",
+                log=True,
+            )
             with tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / uploaded.name
                 path.write_bytes(uploaded.getbuffer())
                 df = load_ads_file(path)
+            monitor.finish_stage(
+                "load",
+                f"{len(df):,} linhas normalizadas.",
+                rows=int(len(df)),
+                columns=int(len(df.columns)),
+            )
+            monitor.update(
+                "scope",
+                0.10,
+                "Identificando estrutura ativa e auditando a base...",
+                log=True,
+            )
 
             decision_entities = None
             operational_df = df
             if not include_inactive:
-                st.write(
-                    "Mantendo todo o histórico como contexto e identificando "
-                    "somente a estrutura ativa para decisões..."
+                monitor.update(
+                    "scope",
+                    0.30,
+                    "Mantendo histórico completo como contexto e separando ativos...",
+                    log=True,
                 )
                 universe = infer_decision_universe(df)
                 decision_entities = {
@@ -207,14 +238,93 @@ def main():
                 use_weekly_seasonality=weekly_seasonality,
             )
 
+            historical_days = int(
+                df["date"].nunique()
+            )
+            active_campaigns_count = int(
+                operational_df["campaign_id"].nunique()
+            )
+            active_adsets_count = int(
+                operational_df["adset_id"].nunique()
+            )
+            active_ads_count = int(
+                operational_df["ad_id"].nunique()
+            )
+            min_train_days = 21
+            validation_step = max(
+                1,
+                int(horizon_days),
+            )
+            if (
+                validate_temporal
+                and historical_days
+                >= min_train_days + int(horizon_days)
+            ):
+                last_origin_index = (
+                    historical_days
+                    - int(horizon_days)
+                    - 1
+                )
+                rolling_origins = len(
+                    range(
+                        min_train_days - 1,
+                        last_origin_index + 1,
+                        validation_step,
+                    )
+                )
+            else:
+                rolling_origins = 0
+
+            monitor.configure_exploration(
+                historical_days=historical_days,
+                historical_campaigns=int(
+                    df["campaign_id"].nunique()
+                ),
+                historical_adsets=int(
+                    df["adset_id"].nunique()
+                ),
+                historical_ads=int(
+                    df["ad_id"].nunique()
+                ),
+                active_campaigns=active_campaigns_count,
+                active_adsets=active_adsets_count,
+                active_ads=active_ads_count,
+                horizon_days=int(horizon_days),
+                actions=config.actions,
+                draws=int(draws),
+                rolling_origins=rolling_origins,
+                temporal_models=(
+                    2 if rolling_origins > 0 else 0
+                ),
+                temporal_model=temporal_model,
+                weekly_seasonality=bool(
+                    weekly_seasonality
+                ),
+            )
+            monitor.finish_stage(
+                "scope",
+                (
+                    f"{active_campaigns_count} campanhas, "
+                    f"{active_adsets_count} conjuntos e "
+                    f"{active_ads_count} anúncios ativos; "
+                    f"qualidade {quality.score:.0f}/100."
+                ),
+                active_campaigns=active_campaigns_count,
+                active_adsets=active_adsets_count,
+                active_ads=active_ads_count,
+                quality_score=float(quality.score),
+            )
+
             diagnostics = None
             ppc_summary = None
             deep_decision_source = None
             deep_guardrail = None
             if inference_mode == "MCMC hierárquico profundo":
-                st.write(
-                    "Ajustando posterior hierárquico completo e conectando-o "
-                    "à árvore de decisões..."
+                monitor.update(
+                    "inference",
+                    0.02,
+                    "Ajustando posterior hierárquico profundo...",
+                    log=True,
                 )
                 from quant_trafego.deep_analysis import run_deep_analysis
 
@@ -234,15 +344,37 @@ def main():
                 ppc_summary = result.ppc_summary
                 deep_decision_source = result.decision_source
                 deep_guardrail = result.guardrail
+                monitor.finish_stage(
+                    "inference",
+                    (
+                        f"Inferência profunda concluída via "
+                        f"{diagnostics.method.upper()}."
+                    ),
+                    inference_method=diagnostics.method,
+                    deep_guardrail=deep_guardrail,
+                )
             else:
-                st.write(
-                    "Estimando posteriores hierárquicos, derivadas temporais, "
-                    "regime e resposta observacional ao gasto..."
+                monitor.update(
+                    "inference",
+                    0.01,
+                    "Iniciando árvore hierárquica e cenários contrafactuais...",
+                    log=True,
                 )
                 engine = BayesTrafficEngine(config)
                 all_actions, best = engine.run(
                     df,
                     decision_entities=decision_entities,
+                    progress_callback=monitor.engine_callback,
+                )
+                monitor.finish_stage(
+                    "inference",
+                    (
+                        f"{len(best)} entidades com decisão calculada; "
+                        f"{len(all_actions):,} ações avaliadas."
+                    ),
+                    decision_entities=int(len(best)),
+                    action_rows=int(len(all_actions)),
+                    draws=int(draws),
                 )
 
             model_comparison = None
@@ -251,22 +383,55 @@ def main():
                 validate_temporal
                 and quality.days >= 21 + int(horizon_days)
             ):
-                st.write(
-                    "Executando comparação temporal rolling-origin "
-                    "em conta e campanhas..."
+                monitor.update(
+                    "validation",
+                    0.0,
+                    (
+                        f"Comparando derivative vs state-space em "
+                        f"{rolling_origins} janelas rolling-origin..."
+                    ),
+                    log=True,
                 )
                 comparison_config = replace(
                     config,
                     draws=min(int(draws), 5000),
                 )
                 model_comparison, model_decision = compare_temporal_models(
-                    df,
+                    operational_df,
                     config=comparison_config,
                     min_train_days=21,
                     horizon_days=int(horizon_days),
                     step_days=max(1, int(horizon_days)),
+                    progress_callback=monitor.temporal_callback,
+                )
+                monitor.finish_stage(
+                    "validation",
+                    (
+                        "Validação temporal concluída; "
+                        + (
+                            "state-space promovido."
+                            if model_decision.get(
+                                "promote_state_space"
+                            )
+                            else "derivada local permanece referência."
+                        )
+                    ),
+                    rolling_origins=rolling_origins,
+                    temporal_model_decision=model_decision,
+                )
+            elif validate_temporal:
+                monitor.finish_stage(
+                    "validation",
+                    "Histórico insuficiente para rolling-origin; etapa ignorada.",
+                    rolling_origins=0,
                 )
 
+            monitor.update(
+                "allocation",
+                0.05,
+                "Definindo envelope total de capital...",
+                log=True,
+            )
             account_budget_target = derive_account_budget_target(
                 best,
                 source_df=operational_df,
@@ -295,6 +460,17 @@ def main():
                         "portfolio_reason": str(portfolio_exc),
                     }
 
+            monitor.update(
+                "allocation",
+                0.55,
+                "Capital da conta distribuído entre campanhas; reconciliando conjuntos...",
+                log=True,
+                account_budget_horizon=float(
+                    account_budget_target[
+                        "recommended_horizon_amount"
+                    ]
+                ),
+            )
             adset_allocation = None
             adset_allocation_summary = None
             if allocation is not None:
@@ -309,6 +485,27 @@ def main():
                         "reason": str(adset_exc),
                     }
 
+            monitor.finish_stage(
+                "allocation",
+                (
+                    f"Alocação concluída para "
+                    f"{0 if allocation is None else len(allocation)} campanhas "
+                    f"e {0 if adset_allocation is None else len(adset_allocation)} conjuntos."
+                ),
+                campaigns_allocated=(
+                    0 if allocation is None else int(len(allocation))
+                ),
+                adsets_allocated=(
+                    0 if adset_allocation is None else int(len(adset_allocation))
+                ),
+            )
+            monitor.update(
+                "plan",
+                0.10,
+                "Convertendo decisões quantitativas em ações operacionais...",
+                log=True,
+            )
+
             operational_plan = build_operational_action_plan(
                 best,
                 allocation=allocation,
@@ -316,6 +513,17 @@ def main():
                 account_budget_target=account_budget_target,
                 source_df=operational_df,
                 horizon_days=config.horizon_days,
+            )
+            monitor.finish_stage(
+                "plan",
+                f"{len(operational_plan)} linhas no plano operacional.",
+                operational_rows=int(len(operational_plan)),
+            )
+            monitor.update(
+                "persist",
+                0.10,
+                "Salvando snapshot, manifest e diagnósticos...",
+                log=True,
             )
 
             manifest = build_run_manifest(
@@ -343,6 +551,7 @@ def main():
                     "adset_allocation_summary": adset_allocation_summary,
                     "deep_decision_source": deep_decision_source,
                     "deep_guardrail": deep_guardrail,
+                    "runtime_telemetry": telemetry.developer_snapshot(),
                 },
             )
             workspace = LocalWarehouse("workspace")
@@ -365,6 +574,9 @@ def main():
                 extra_json["allocation_summary"] = allocation_summary
             if adset_allocation_summary is not None:
                 extra_json["adset_allocation_summary"] = adset_allocation_summary
+            extra_tables["runtime_telemetry"] = telemetry.dataframe()
+            extra_tables["runtime_stage_summary"] = telemetry.stage_summary()
+            extra_json["runtime_telemetry"] = telemetry.developer_snapshot()
             if diagnostics is not None:
                 extra_tables["posterior_predictive_checks"] = result.ppc_detail
                 if result.guardrail != "none":
@@ -376,6 +588,31 @@ def main():
                 best,
                 extra_tables=extra_tables,
                 extra_json=extra_json,
+            )
+            monitor.finish_stage(
+                "persist",
+                f"Execução auditável salva em {run_dir}.",
+                run_dir=str(run_dir),
+            )
+            monitor.done()
+            telemetry.dataframe().to_csv(
+                run_dir / "runtime_telemetry.csv",
+                index=False,
+            )
+            telemetry.stage_summary().to_csv(
+                run_dir / "runtime_stage_summary.csv",
+                index=False,
+            )
+            (
+                run_dir / "runtime_telemetry.json"
+            ).write_text(
+                json.dumps(
+                    telemetry.developer_snapshot(),
+                    indent=2,
+                    ensure_ascii=False,
+                    default=str,
+                ),
+                encoding="utf-8",
             )
             status.update(label="Análise concluída.", state="complete", expanded=False)
 
