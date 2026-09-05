@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 import pandas as pd
 
@@ -87,3 +88,185 @@ def filter_active(df: pd.DataFrame) -> pd.DataFrame:
 
     # Se nenhum termo conhecido for encontrado, não descartamos a base.
     return df.loc[mask].copy() if mask.any() else df.copy()
+
+
+
+@dataclass(frozen=True)
+class DecisionUniverse:
+    campaign_ids: frozenset[str]
+    adset_ids: frozenset[str]
+    ad_ids: frozenset[str]
+    detection_method: str
+    recent_days: int
+
+
+_ACTIVE_TERMS = {
+    "active",
+    "ativo",
+    "ativa",
+    "learning",
+    "aprendizado",
+    "learning limited",
+    "aprendizado limitado",
+    "enabled",
+}
+
+
+def infer_decision_universe(
+    df: pd.DataFrame,
+    *,
+    recent_days: int = 3,
+) -> DecisionUniverse:
+    """
+    Identify the entities that are operationally active now while preserving
+    every historical row in df as statistical context.
+
+    Current delivery status is preferred. When status is absent/unrecognized,
+    recent spend/impressions are used as a conservative activity fallback.
+    """
+    if df.empty:
+        return DecisionUniverse(
+            frozenset(),
+            frozenset(),
+            frozenset(),
+            "empty",
+            int(recent_days),
+        )
+
+    work = df.copy()
+    if "date" in work.columns:
+        work["date"] = pd.to_datetime(
+            work["date"],
+            errors="coerce",
+        )
+
+    active_mask = None
+    method = None
+
+    if "status" in work.columns:
+        status = (
+            work["status"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.lower()
+        )
+        known_active = status.isin(_ACTIVE_TERMS)
+        if known_active.any():
+            active_mask = known_active
+            method = "delivery_status"
+
+    if active_mask is None:
+        if "date" in work.columns and work["date"].notna().any():
+            latest = work["date"].max()
+            cutoff = latest - pd.Timedelta(
+                days=max(int(recent_days), 1) - 1
+            )
+            recent = work["date"] >= cutoff
+        else:
+            recent = pd.Series(
+                True,
+                index=work.index,
+            )
+
+        spend = (
+            pd.to_numeric(
+                work["spend"],
+                errors="coerce",
+            ).fillna(0.0)
+            if "spend" in work.columns
+            else pd.Series(
+                0.0,
+                index=work.index,
+            )
+        )
+        impressions = (
+            pd.to_numeric(
+                work["impressions"],
+                errors="coerce",
+            ).fillna(0.0)
+            if "impressions" in work.columns
+            else pd.Series(
+                0.0,
+                index=work.index,
+            )
+        )
+        active_mask = recent & (
+            (spend > 0)
+            | (impressions > 0)
+        )
+        method = "recent_delivery_activity"
+
+    active = work.loc[active_mask].copy()
+
+    def ids(column: str) -> frozenset[str]:
+        if column not in active.columns:
+            return frozenset()
+        values = (
+            active[column]
+            .dropna()
+            .astype(str)
+            .str.strip()
+        )
+        values = values[
+            ~values.isin(
+                {
+                    "",
+                    "0",
+                    "0.0",
+                    "nan",
+                    "None",
+                }
+            )
+        ]
+        return frozenset(
+            values.unique().tolist()
+        )
+
+    return DecisionUniverse(
+        campaign_ids=ids("campaign_id"),
+        adset_ids=ids("adset_id"),
+        ad_ids=ids("ad_id"),
+        detection_method=str(method),
+        recent_days=int(recent_days),
+    )
+
+
+def filter_decision_rows(
+    df: pd.DataFrame,
+    universe: DecisionUniverse,
+) -> pd.DataFrame:
+    """
+    Return rows belonging to the currently active operational portfolio.
+
+    This helper is for budget baselines/output only. Do not use it as the
+    statistical context supplied to the Bayesian engine.
+    """
+    if df.empty:
+        return df.copy()
+
+    if universe.ad_ids and "ad_id" in df.columns:
+        return df[
+            df["ad_id"].astype(str).isin(
+                universe.ad_ids
+            )
+        ].copy()
+
+    if universe.adset_ids and "adset_id" in df.columns:
+        return df[
+            df["adset_id"].astype(str).isin(
+                universe.adset_ids
+            )
+        ].copy()
+
+    if (
+        universe.campaign_ids
+        and "campaign_id" in df.columns
+    ):
+        return df[
+            df["campaign_id"].astype(str).isin(
+                universe.campaign_ids
+            )
+        ].copy()
+
+    return df.iloc[0:0].copy()
