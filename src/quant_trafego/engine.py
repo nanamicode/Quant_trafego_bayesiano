@@ -40,6 +40,11 @@ class EngineConfig:
     use_temporal: bool = True
     temporal_model: str = "derivative"
     use_empirical_response: bool = True
+    predictive_max_multiplier: float = 1.20
+    observational_max_multiplier: float = 1.50
+    experiment_max_multiplier: float = 2.00
+    min_p_profit_for_scale: float = 0.60
+    min_p_incremental_for_scale: float = 0.55
 
     global_ctr_strength: float = 2500
     global_cvr_strength: float = 250
@@ -409,8 +414,56 @@ class BayesTrafficEngine:
             )
 
         all_actions = pd.DataFrame(rows)
-        idx = all_actions.groupby(["level", "entity_id"])["risk_adjusted_utility"].idxmax()
+
+        tier_caps = {
+            "predictive": self.config.predictive_max_multiplier,
+            "observational_intervention": self.config.observational_max_multiplier,
+            "experiment_calibrated": self.config.experiment_max_multiplier,
+        }
+        caps = all_actions["evidence_tier"].map(tier_caps).fillna(
+            self.config.predictive_max_multiplier
+        )
+        scale = all_actions["action_multiplier"] > 1.0
+        all_actions["policy_eligible"] = (
+            all_actions["action_multiplier"] <= caps + 1e-12
+        ) & (
+            (~scale)
+            | (
+                (all_actions["p_profit"] >= self.config.min_p_profit_for_scale)
+                & (
+                    all_actions["p_incremental_profit_positive"]
+                    >= self.config.min_p_incremental_for_scale
+                )
+            )
+        )
+
+        raw_idx = all_actions.groupby(
+            ["level", "entity_id"]
+        )["risk_adjusted_utility"].idxmax()
+        raw_best = all_actions.loc[
+            raw_idx,
+            ["level", "entity_id", "action_multiplier", "risk_adjusted_utility"],
+        ].rename(
+            columns={
+                "action_multiplier": "unconstrained_best_multiplier",
+                "risk_adjusted_utility": "unconstrained_best_utility",
+            }
+        )
+
+        eligible = all_actions[all_actions["policy_eligible"]].copy()
+        idx = eligible.groupby(
+            ["level", "entity_id"]
+        )["risk_adjusted_utility"].idxmax()
         best = all_actions.loc[idx].copy().reset_index(drop=True)
+        best = best.merge(
+            raw_best,
+            on=["level", "entity_id"],
+            how="left",
+        )
+        best["policy_constrained"] = (
+            best["action_multiplier"]
+            != best["unconstrained_best_multiplier"]
+        )
 
         confidence = (
             0.40 * best["p_profit"]
