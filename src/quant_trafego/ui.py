@@ -9,6 +9,8 @@ from quant_trafego.engine import BayesTrafficEngine, EngineConfig
 from quant_trafego.hardware import detect_hardware
 from quant_trafego.io import filter_active, load_ads_file
 from quant_trafego.quality import assess_data_quality
+from quant_trafego.reproducibility import build_run_manifest
+from quant_trafego.storage import LocalWarehouse
 
 
 DEPTHS = {
@@ -171,7 +173,28 @@ def main():
                 engine = BayesTrafficEngine(config)
                 all_actions, best = engine.run(df)
 
+            manifest = build_run_manifest(
+                df,
+                config=config,
+                inference_mode=(
+                    f"mcmc_{diagnostics.method}"
+                    if diagnostics is not None
+                    else "empirical_bayes"
+                ),
+                seed=config.seed,
+                extra={
+                    "quality_score": quality.score,
+                    "quality_warnings": list(quality.warnings),
+                    "mcmc_diagnostics": (
+                        diagnostics.__dict__ if diagnostics is not None else None
+                    ),
+                },
+            )
+            workspace = LocalWarehouse("workspace")
+            run_dir = workspace.persist_run(df, manifest, all_actions, best)
             status.update(label="Análise concluída.", state="complete", expanded=False)
+
+        st.caption(f"Execução auditável salva em: {run_dir}")
 
         if diagnostics is not None:
             st.subheader("Diagnóstico MCMC")
