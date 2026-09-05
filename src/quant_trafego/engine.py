@@ -273,15 +273,23 @@ class BayesTrafficEngine:
             )
 
         hold = next(x for x in sims if x["multiplier"] == 1.0)
-        hold_draws = hold["_profit_draws"]
-        profit_matrix = np.vstack([x["_profit_draws"] for x in sims])
+        hold_draws = hold["_decision_profit_draws"]
+        profit_matrix = np.vstack(
+            [x["_decision_profit_draws"] for x in sims]
+        )
         best_idx = np.argmax(profit_matrix, axis=0)
         best_draws = np.max(profit_matrix, axis=0)
 
         rows = []
         for i, sim in enumerate(sims):
             profit_draws = sim["_profit_draws"]
-            regret = float(np.mean(best_draws - profit_draws))
+            decision_draws = sim["_decision_profit_draws"]
+            regret = float(
+                np.mean(
+                    best_draws
+                    - decision_draws
+                )
+            )
             downside = max(0.0, -sim["cvar10_profit"])
             instability_penalty = (
                 temporal.instability_score * abs(sim["expected_profit"]) * 0.10
@@ -293,7 +301,10 @@ class BayesTrafficEngine:
                 - self.config.risk_aversion * instability_penalty
             )
 
-            incremental = profit_draws - hold_draws
+            incremental = (
+                decision_draws
+                - hold_draws
+            )
             rows.append({
                 "level": level,
                 "entity_id": str(entity_id),
@@ -345,7 +356,12 @@ class BayesTrafficEngine:
                 "p_profit": sim["p_profit"],
                 "p_ruin": 1.0 - sim["p_profit"],
                 "p_roas_target": sim["p_roas_target"],
-                "p_beats_hold": float(np.mean(profit_draws > hold_draws)),
+                "p_beats_hold": float(
+                    np.mean(
+                        decision_draws
+                        > hold_draws
+                    )
+                ),
                 "p_action_optimal": float(np.mean(best_idx == i)),
                 "expected_incremental_profit_vs_hold": float(np.mean(incremental)),
                 "p_incremental_profit_positive": float(np.mean(incremental > 0)),
