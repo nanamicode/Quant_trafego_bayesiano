@@ -778,18 +778,59 @@ def main():
             ]
         )
         with tab_plan:
-            b1, b2, b3 = st.columns(3)
+            campaign_plan = operational_plan[
+                operational_plan["level"] == "campaign"
+            ]
+            deployed_daily = float(
+                campaign_plan[
+                    "recommended_daily_amount"
+                ].fillna(0.0).sum()
+            )
+            current_deployed_daily = float(
+                campaign_plan[
+                    "current_daily_amount"
+                ].fillna(0.0).sum()
+            )
+            capital_ceiling_daily = float(
+                account_budget_target[
+                    "recommended_daily_amount"
+                ]
+            )
+            unallocated_daily = max(
+                capital_ceiling_daily
+                - deployed_daily,
+                0.0,
+            )
+
+            b1, b2, b3, b4 = st.columns(4)
             b1.metric(
-                "Capital total atual/dia",
-                _fmt_money(account_budget_target["current_daily_amount"]),
+                "Spend atual/dia",
+                _fmt_money(current_deployed_daily),
             )
             b2.metric(
-                "Capital total recomendado/dia",
-                _fmt_money(account_budget_target["recommended_daily_amount"]),
+                "Spend recomendado/dia",
+                _fmt_money(deployed_daily),
             )
             b3.metric(
-                "Mudança total/dia",
-                _fmt_money(account_budget_target["daily_amount_change"]),
+                "Mudança executável/dia",
+                _fmt_money(
+                    deployed_daily
+                    - current_deployed_daily
+                ),
+            )
+            b4.metric(
+                "Capital não alocado/dia",
+                _fmt_money(unallocated_daily),
+                help=(
+                    "Parte do teto de capital da conta que o portfólio "
+                    "não encontrou justificativa estatística para empregar."
+                ),
+            )
+            st.caption(
+                "Teto de capital permitido pela decisão da conta: "
+                f"{_fmt_money(capital_ceiling_daily)}/dia. "
+                "O spend recomendado é a soma dos cenários de campanha "
+                "efetivamente selecionados pelo portfólio."
             )
             if operational_plan.empty:
                 st.info("Nenhuma ação operacional disponível.")
@@ -819,7 +860,10 @@ def main():
                             "adset_name",
                             "ad_name",
                             "capital_action",
+                            "model_suggested_action",
+                            "blocked_by_parent",
                             "current_daily_amount",
+                            "configured_daily_budget",
                             "recommended_daily_amount",
                             "daily_amount_change",
                             "duplicate_action",
