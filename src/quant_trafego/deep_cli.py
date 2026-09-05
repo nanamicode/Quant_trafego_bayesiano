@@ -31,6 +31,11 @@ def main():
         help="Amostras Monte Carlo por ação. 0 = automático pelo hardware.",
     )
     parser.add_argument("--risk-aversion", type=float, default=0.25)
+    parser.add_argument(
+        "--temporal-model",
+        choices=["derivative", "state_space"],
+        default="derivative",
+    )
     parser.add_argument("--mcmc-draws", type=int, default=1200)
     parser.add_argument("--mcmc-tune", type=int, default=1200)
     parser.add_argument("--chains", type=int)
@@ -67,6 +72,7 @@ def main():
             draws=mc_draws,
             risk_aversion=args.risk_aversion,
             seed=args.seed,
+            temporal_model=args.temporal_model,
         )
 
     result = run_deep_analysis(
@@ -98,7 +104,12 @@ def main():
     write_run_manifest(manifest, args.output)
     workspace = LocalWarehouse(args.workspace)
     run_dir = workspace.persist_run(
-        df, manifest, result.all_actions, result.best_actions
+        df,
+        manifest,
+        result.all_actions,
+        result.best_actions,
+        extra_tables={"posterior_predictive_checks": result.ppc_detail},
+        extra_json={"posterior_predictive_summary": result.ppc_summary.__dict__},
     )
     print(f"Run auditável: {run_dir}")
     print(result.diagnostics)
