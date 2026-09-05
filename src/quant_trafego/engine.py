@@ -23,6 +23,7 @@ REQUIRED = [
 @dataclass
 class EngineConfig:
     target_roas: float = 2.0
+    contribution_margin: float = 1.0
     horizon_days: int = 7
     draws: int = 30000
     seed: int = 42
@@ -44,6 +45,8 @@ class EngineConfig:
 class BayesTrafficEngine:
     def __init__(self, config: EngineConfig | None = None):
         self.config = config or EngineConfig()
+        if not 0.0 <= self.config.contribution_margin <= 1.0:
+            raise ValueError("contribution_margin deve estar entre 0 e 1.")
         self.rng = np.random.default_rng(self.config.seed)
 
     def validate(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -106,6 +109,7 @@ class BayesTrafficEngine:
                     draws=self.config.draws,
                     horizon_days=self.config.horizon_days,
                     target_roas=self.config.target_roas,
+                    contribution_margin=self.config.contribution_margin,
                     rng=self.rng,
                     saturation_half=self.config.saturation_half,
                     saturation_slope=self.config.saturation_slope,
@@ -134,6 +138,7 @@ class BayesTrafficEngine:
                 "posterior_cvr_mean": cvr_post.mean,
                 "posterior_ctr_strength": ctr_post.strength,
                 "posterior_cvr_strength": cvr_post.strength,
+                "contribution_margin": self.config.contribution_margin,
                 "action_multiplier": sim["multiplier"],
                 "expected_spend": sim["expected_spend"],
                 "expected_revenue": sim["expected_revenue"],
