@@ -97,6 +97,8 @@ class LocalWarehouse:
         manifest: dict[str, Any],
         all_actions: pd.DataFrame | None = None,
         best_actions: pd.DataFrame | None = None,
+        extra_tables: dict[str, pd.DataFrame] | None = None,
+        extra_json: dict[str, dict[str, Any]] | None = None,
     ) -> Path:
         self.store_snapshot(df, manifest["data_sha256"])
         run_dir = self.runs_dir / manifest["run_id"]
@@ -109,6 +111,13 @@ class LocalWarehouse:
             all_actions.to_csv(run_dir / "all_actions.csv", index=False)
         if best_actions is not None:
             best_actions.to_csv(run_dir / "best_actions.csv", index=False)
+        for name, table in (extra_tables or {}).items():
+            table.to_csv(run_dir / f"{name}.csv", index=False)
+        for name, payload in (extra_json or {}).items():
+            (run_dir / f"{name}.json").write_text(
+                json.dumps(payload, indent=2, ensure_ascii=False, default=str),
+                encoding="utf-8",
+            )
         self.register_run(manifest)
         return run_dir
 
