@@ -183,7 +183,9 @@ def main():
             ),
         },
         extra_json={
-            "allocation_summary": allocation_summary or {}
+            "account_budget_target": account_budget_target,
+            "allocation_summary": allocation_summary or {},
+            "adset_allocation_summary": adset_allocation_summary or {},
         },
     )
     print(f"Run auditável: {run_dir}")
