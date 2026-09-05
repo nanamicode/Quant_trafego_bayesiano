@@ -1,6 +1,7 @@
 import pandas as pd
 
 from quant_trafego.engine import BayesTrafficEngine, EngineConfig
+from quant_trafego.model import BetaPosterior
 
 
 def test_engine_runs():
@@ -30,3 +31,17 @@ def test_zero_contribution_margin_cannot_generate_profit_with_spend():
     spending_actions = all_actions[all_actions["expected_spend"] > 0]
     assert (spending_actions["p_profit"] == 0.0).all()
     assert (spending_actions["expected_profit"] < 0.0).all()
+
+
+def test_engine_accepts_mcmc_posterior_override():
+    df = pd.read_csv("examples/example_data.csv")
+    engine = BayesTrafficEngine(EngineConfig(draws=300, seed=123))
+    overrides = {
+        ("account", "ALL"): (
+            BetaPosterior(2500, 97500),
+            BetaPosterior(80, 920),
+        )
+    }
+    all_actions, _ = engine.run(df, posterior_overrides=overrides)
+    account = all_actions[all_actions["level"] == "account"]
+    assert set(account["posterior_source"]) == {"mcmc"}
