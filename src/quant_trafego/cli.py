@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 from pathlib import Path
 
 from .engine import BayesTrafficEngine, EngineConfig
@@ -86,6 +87,7 @@ def main():
         extra={
             "quality_score": quality.score,
             "quality_warnings": list(quality.warnings),
+            "quality_report": asdict(quality),
         },
     )
     write_run_manifest(manifest, args.output)
