@@ -188,3 +188,36 @@ def test_action_grid_requires_hold_baseline():
                 actions=(0.0, 0.8, 1.2),
             )
         )
+
+
+def test_entity_selection_uses_revenue_only_as_secondary_objective():
+    engine = BayesTrafficEngine(
+        EngineConfig(
+            revenue_tiebreak=True,
+            revenue_tiebreak_tolerance=0.02,
+        )
+    )
+    actions = pd.DataFrame(
+        [
+            {
+                "level": "campaign",
+                "entity_id": "c1",
+                "risk_adjusted_utility": 100.0,
+                "expected_revenue": 500.0,
+            },
+            {
+                "level": "campaign",
+                "entity_id": "c1",
+                "risk_adjusted_utility": 99.0,
+                "expected_revenue": 900.0,
+            },
+            {
+                "level": "campaign",
+                "entity_id": "c1",
+                "risk_adjusted_utility": 90.0,
+                "expected_revenue": 5000.0,
+            },
+        ]
+    )
+    idx = engine._select_profit_first_growth_indices(actions)
+    assert idx == [1]
