@@ -219,13 +219,16 @@ class BayesTrafficEngine:
                 min_days=self.config.seasonality_min_days,
             )
             last_date = stats["daily"]["date"].max()
+            from_last_day = posterior_source == "mcmc"
             ctr_weekly_mean, ctr_weekly_sd = weekly.ctr.future_shift(
                 last_date,
                 self.config.horizon_days,
+                from_last_day=from_last_day,
             )
             cvr_weekly_mean, cvr_weekly_sd = weekly.cvr.future_shift(
                 last_date,
                 self.config.horizon_days,
+                from_last_day=from_last_day,
             )
             weekly_confidence = weekly.confidence
         else:
