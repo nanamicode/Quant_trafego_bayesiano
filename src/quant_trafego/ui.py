@@ -92,6 +92,10 @@ def main():
             "Validar modelos temporais fora da amostra",
             value=True,
         )
+        weekly_seasonality = st.checkbox(
+            "Modelar sazonalidade semanal",
+            value=True,
+        )
 
     mcmc_method = "auto"
     mcmc_draws = 1200
@@ -171,6 +175,7 @@ def main():
                 draws=int(draws),
                 risk_aversion=float(risk_aversion),
                 temporal_model=temporal_model,
+                use_weekly_seasonality=weekly_seasonality,
             )
 
             diagnostics = None
