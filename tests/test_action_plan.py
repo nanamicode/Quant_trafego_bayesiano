@@ -1,6 +1,6 @@
 import pandas as pd
 
-from quant_trafego.action_plan import build_operational_action_plan
+from quant_trafego.action_plan import build_operational_action_plan, derive_account_budget_target
 
 
 def _best():
@@ -193,3 +193,188 @@ def test_adset_allocation_replaces_independent_adset_action():
     adset = plan[plan["level"] == "adset"].iloc[0]
     assert adset["capital_action"] == "REDUZIR"
     assert adset["action_multiplier"] == 0.8
+
+
+def test_account_action_defines_absolute_capital_envelope():
+    best = pd.DataFrame(
+        [
+            {
+                "level": "account",
+                "entity_id": "ALL",
+                "action_multiplier": 1.2,
+                "historical_days": 14,
+                "historical_spend": 1400.0,
+                "p_profit": 0.9,
+                "p_incremental_profit_positive": 0.8,
+                "decision_score": 0.8,
+            }
+        ]
+    )
+    source = pd.DataFrame(
+        [
+            {
+                "date": "2026-09-05",
+                "campaign_id": "c1",
+                "campaign_daily_budget": 100.0,
+                "spend": 90.0,
+            },
+            {
+                "date": "2026-09-05",
+                "campaign_id": "c2",
+                "campaign_daily_budget": 50.0,
+                "spend": 45.0,
+            },
+        ]
+    )
+    target = derive_account_budget_target(
+        best,
+        source_df=source,
+        horizon_days=7,
+    )
+    assert target["current_daily_amount"] == 150.0
+    assert target["recommended_daily_amount"] == 180.0
+    assert target["recommended_horizon_amount"] == 1260.0
+
+
+def test_campaign_and_adset_amounts_close_to_parent_envelopes():
+    best = pd.DataFrame(
+        [
+            {
+                "level": "account",
+                "entity_id": "ALL",
+                "action_multiplier": 1.2,
+                "historical_days": 7,
+                "historical_spend": 700.0,
+                "p_profit": 0.9,
+                "p_incremental_profit_positive": 0.8,
+                "decision_score": 0.8,
+            },
+            {
+                "level": "campaign",
+                "entity_id": "c1",
+                "campaign_id": "c1",
+                "campaign_name": "C1",
+                "action_multiplier": 1.2,
+                "historical_days": 7,
+                "historical_spend": 700.0,
+                "expected_profit": 100.0,
+                "expected_revenue": 300.0,
+                "expected_incremental_profit_vs_hold": 20.0,
+                "expected_incremental_revenue_vs_hold": 50.0,
+                "p_profit": 0.9,
+                "p_roas_target": 0.7,
+                "p_beats_hold": 0.7,
+                "p_incremental_profit_positive": 0.75,
+                "p_action_optimal": 0.6,
+                "cvar10_profit": 10.0,
+                "expected_regret": 2.0,
+                "response_confidence": 0.3,
+                "evidence_tier": "observational_intervention",
+                "policy_eligible": True,
+                "data_quality_score": 95.0,
+                "decision_score": 0.8,
+            },
+            {
+                "level": "adset",
+                "entity_id": "s1",
+                "campaign_id": "c1",
+                "campaign_name": "C1",
+                "adset_id": "s1",
+                "adset_name": "S1",
+                "action_multiplier": 1.2,
+                "historical_days": 7,
+                "historical_spend": 420.0,
+                "expected_profit": 60.0,
+                "expected_revenue": 180.0,
+                "expected_incremental_profit_vs_hold": 10.0,
+                "expected_incremental_revenue_vs_hold": 20.0,
+                "p_profit": 0.9,
+                "p_roas_target": 0.7,
+                "p_beats_hold": 0.7,
+                "p_incremental_profit_positive": 0.75,
+                "p_action_optimal": 0.6,
+                "cvar10_profit": 5.0,
+                "expected_regret": 1.0,
+                "response_confidence": 0.3,
+                "evidence_tier": "observational_intervention",
+                "policy_eligible": True,
+                "data_quality_score": 95.0,
+                "decision_score": 0.8,
+            },
+            {
+                "level": "adset",
+                "entity_id": "s2",
+                "campaign_id": "c1",
+                "campaign_name": "C1",
+                "adset_id": "s2",
+                "adset_name": "S2",
+                "action_multiplier": 0.8,
+                "historical_days": 7,
+                "historical_spend": 280.0,
+                "expected_profit": 40.0,
+                "expected_revenue": 120.0,
+                "expected_incremental_profit_vs_hold": 8.0,
+                "expected_incremental_revenue_vs_hold": -5.0,
+                "p_profit": 0.9,
+                "p_roas_target": 0.7,
+                "p_beats_hold": 0.7,
+                "p_incremental_profit_positive": 0.75,
+                "p_action_optimal": 0.6,
+                "cvar10_profit": 5.0,
+                "expected_regret": 1.0,
+                "response_confidence": 0.3,
+                "evidence_tier": "observational_intervention",
+                "policy_eligible": True,
+                "data_quality_score": 95.0,
+                "decision_score": 0.8,
+            },
+        ]
+    )
+    source = pd.DataFrame(
+        [
+            {
+                "date": "2026-09-05",
+                "campaign_id": "c1",
+                "campaign_daily_budget": 100.0,
+                "adset_id": "s1",
+                "adset_daily_budget": 60.0,
+                "spend": 60.0,
+            },
+            {
+                "date": "2026-09-05",
+                "campaign_id": "c1",
+                "campaign_daily_budget": 100.0,
+                "adset_id": "s2",
+                "adset_daily_budget": 40.0,
+                "spend": 40.0,
+            },
+        ]
+    )
+    target = derive_account_budget_target(
+        best,
+        source_df=source,
+        horizon_days=7,
+    )
+    campaign_alloc = best[best["level"] == "campaign"].copy()
+    campaign_alloc["expected_spend"] = 840.0
+    campaign_alloc["parent_account_budget_limit"] = 840.0
+
+    nested = best[best["level"] == "adset"].copy()
+    nested.loc[nested["entity_id"] == "s1", "expected_spend"] = 504.0
+    nested.loc[nested["entity_id"] == "s2", "expected_spend"] = 336.0
+    nested["parent_campaign_budget_limit"] = 840.0
+
+    plan = build_operational_action_plan(
+        best,
+        allocation=campaign_alloc,
+        adset_allocation=nested,
+        account_budget_target=target,
+        source_df=source,
+        horizon_days=7,
+    )
+
+    campaign = plan[plan["level"] == "campaign"]
+    adsets = plan[plan["level"] == "adset"]
+    assert abs(campaign["recommended_daily_amount"].sum() - 120.0) < 1e-9
+    assert abs(adsets["recommended_daily_amount"].sum() - 120.0) < 1e-9
+    assert adsets["nested_budget_reconciled"].all()
