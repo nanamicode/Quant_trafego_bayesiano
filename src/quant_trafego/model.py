@@ -313,6 +313,9 @@ def sample_simulation_context(
     temporal_cvr_slope_sd: float = 0.0,
     response_elasticity_mean: float = 0.75,
     response_elasticity_sd: float = 0.25,
+    current_ctr_logit_shift: float = 0.0,
+    current_cvr_logit_shift: float = 0.0,
+    temporal_projection_days: float = 2.0,
     seasonal_ctr_shift_mean: float = 0.0,
     seasonal_ctr_shift_sd: float = 0.0,
     seasonal_cvr_shift_mean: float = 0.0,
@@ -366,9 +369,33 @@ def sample_simulation_context(
         draws,
     )
 
-    avg_future_day = (
-        horizon_days + 1.0
-    ) / 2.0
+    if current_ctr_logit_shift != 0.0:
+        ctr = _sigmoid(
+            _logit(ctr)
+            + float(
+                np.clip(
+                    current_ctr_logit_shift,
+                    -0.75,
+                    0.75,
+                )
+            )
+        )
+    if current_cvr_logit_shift != 0.0:
+        cvr = _sigmoid(
+            _logit(cvr)
+            + float(
+                np.clip(
+                    current_cvr_logit_shift,
+                    -0.75,
+                    0.75,
+                )
+            )
+        )
+
+    avg_future_day = min(
+        (horizon_days + 1.0) / 2.0,
+        max(float(temporal_projection_days), 0.0),
+    )
 
     if (
         temporal_ctr_slope_mean != 0.0
@@ -385,8 +412,8 @@ def sample_simulation_context(
         ctr_shift = np.clip(
             ctr_slope
             * avg_future_day,
-            -1.5,
-            1.5,
+            -0.75,
+            0.75,
         )
         ctr = _sigmoid(
             _logit(ctr)
@@ -504,18 +531,27 @@ def simulate_action(
     response_elasticity_mean: float = 0.75,
     response_elasticity_sd: float = 0.25,
     response_confidence: float = 0.0,
+    base_daily_spend: float | None = None,
+    current_ctr_logit_shift: float = 0.0,
+    current_cvr_logit_shift: float = 0.0,
+    temporal_projection_days: float = 2.0,
     seasonal_ctr_shift_mean: float = 0.0,
     seasonal_ctr_shift_sd: float = 0.0,
     seasonal_cvr_shift_mean: float = 0.0,
     seasonal_cvr_shift_sd: float = 0.0,
     context: SimulationContext | None = None,
 ) -> dict:
-    base_daily_spend = (
-        stats["spend"]
-        / max(
-            stats["days"],
-            1,
+    if base_daily_spend is None:
+        base_daily_spend = (
+            stats["spend"]
+            / max(
+                stats["days"],
+                1,
+            )
         )
+    base_daily_spend = max(
+        float(base_daily_spend),
+        0.0,
     )
     spend = float(
         base_daily_spend
@@ -544,6 +580,9 @@ def simulate_action(
             temporal_cvr_slope_sd=temporal_cvr_slope_sd,
             response_elasticity_mean=response_elasticity_mean,
             response_elasticity_sd=response_elasticity_sd,
+            current_ctr_logit_shift=current_ctr_logit_shift,
+            current_cvr_logit_shift=current_cvr_logit_shift,
+            temporal_projection_days=temporal_projection_days,
             seasonal_ctr_shift_mean=seasonal_ctr_shift_mean,
             seasonal_ctr_shift_sd=seasonal_ctr_shift_sd,
             seasonal_cvr_shift_mean=seasonal_cvr_shift_mean,
