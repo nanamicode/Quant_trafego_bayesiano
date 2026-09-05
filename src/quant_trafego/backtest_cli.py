@@ -17,7 +17,7 @@ def main():
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", default="backtest_output")
     parser.add_argument("--target-roas", type=float, default=2.0)
-    parser.add_argument("--contribution-margin", type=float, default=1.0)
+    parser.add_argument("--contribution-margin", type=float, required=True)
     parser.add_argument("--horizon-days", type=int, default=7)
     parser.add_argument("--min-train-days", type=int, default=21)
     parser.add_argument("--step-days", type=int, default=7)
