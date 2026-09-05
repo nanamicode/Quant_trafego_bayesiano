@@ -3,14 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 
-import pandas as pd
 import streamlit as st
 
 from quant_trafego.engine import BayesTrafficEngine, EngineConfig
+from quant_trafego.hardware import detect_hardware
 from quant_trafego.io import filter_active, load_ads_file
+from quant_trafego.quality import assess_data_quality
 
 
 DEPTHS = {
+    "Automática": None,
     "Rápida": 5_000,
     "Completa": 30_000,
     "Profunda": 100_000,
@@ -25,8 +27,15 @@ def main():
     st.set_page_config(page_title="Quant Tráfego Bayesiano", layout="wide")
     st.title("Quant Tráfego Bayesiano")
     st.caption(
-        "Análise local: a planilha é processada no próprio computador. "
-        "A interface usa localhost; não é necessário servidor pago."
+        "Motor quantitativo local. A planilha e os cálculos permanecem no computador; "
+        "a interface usa apenas localhost."
+    )
+
+    hw = detect_hardware()
+    ram = f"{hw.ram_gb:.1f} GB" if hw.ram_gb is not None else "não detectada"
+    st.info(
+        f"Hardware detectado: {hw.cpu_threads} threads de CPU | RAM {ram} | "
+        f"perfil {hw.label} | Monte Carlo automático: {hw.recommended_draws:,} amostras."
     )
 
     uploaded = st.file_uploader(
@@ -36,7 +45,7 @@ def main():
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        depth = st.selectbox("Profundidade", list(DEPTHS), index=1)
+        depth = st.selectbox("Profundidade Monte Carlo", list(DEPTHS), index=0)
     with c2:
         horizon_days = st.number_input("Horizonte futuro (dias)", 1, 90, 7)
     with c3:
@@ -48,7 +57,7 @@ def main():
             max_value=100.0,
             value=100.0,
             step=1.0,
-            help="Margem antes do gasto de mídia. Ex.: 40 significa lucro = receita × 40% − mídia.",
+            help="Margem antes da mídia. Ex.: 40 significa lucro = receita × 40% − mídia.",
         )
 
     c5, c6 = st.columns(2)
@@ -67,7 +76,7 @@ def main():
         st.info("Envie um CSV ou XLSX para começar.")
         return
 
-    if not st.button("Analisar profundamente", type="primary", use_container_width=True):
+    if not st.button("Executar análise quantitativa", type="primary", use_container_width=True):
         return
 
     try:
@@ -82,54 +91,101 @@ def main():
                 st.write("Filtrando entidades ativas...")
                 df = filter_active(df)
 
+            quality = assess_data_quality(df)
             st.write(
-                f"Base carregada: {len(df):,} linhas | "
-                f"{df['campaign_id'].nunique() if 'campaign_id' in df else 0} campanhas | "
-                f"{df['adset_id'].nunique() if 'adset_id' in df else 0} conjuntos | "
-                f"{df['ad_id'].nunique() if 'ad_id' in df else 0} anúncios."
+                f"Base: {quality.rows:,} linhas | {quality.days} dias | "
+                f"{quality.campaigns} campanhas | {quality.adsets} conjuntos | "
+                f"{quality.ads} anúncios | qualidade estrutural {quality.score:.0f}/100."
+            )
+            for warning in quality.warnings:
+                st.warning(warning)
+
+            draws = DEPTHS[depth] or hw.recommended_draws
+            st.write(f"Monte Carlo: {draws:,} amostras por ação/entidade.")
+            st.write(
+                "Estimando posteriores hierárquicos, derivadas temporais, "
+                "mudança de regime e resposta observacional ao gasto..."
             )
 
-            st.write("Aprendendo distribuição global e descendo a hierarquia...")
             engine = BayesTrafficEngine(
                 EngineConfig(
                     target_roas=float(target_roas),
                     contribution_margin=float(margin_pct) / 100.0,
                     horizon_days=int(horizon_days),
-                    draws=DEPTHS[depth],
+                    draws=int(draws),
                     risk_aversion=float(risk_aversion),
                 )
             )
             all_actions, best = engine.run(df)
             status.update(label="Análise concluída.", state="complete", expanded=False)
 
-        st.subheader("Visão geral")
         account = best[best["level"] == "account"]
+        st.subheader("Visão geral")
         if not account.empty:
             row = account.iloc[0]
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Ação global sugerida", f"{row['action_multiplier']:.1f}x")
+            m1, m2, m3, m4, m5 = st.columns(5)
+            m1.metric("Ação global", f"{row['action_multiplier']:.1f}x")
             m2.metric("Lucro esperado", _fmt_money(row["expected_profit"]))
             m3.metric("P(lucro)", f"{row['p_profit']:.1%}")
-            m4.metric("P(ROAS alvo)", f"{row['p_roas_target']:.1%}")
+            m4.metric("P(ação ótima)", f"{row['p_action_optimal']:.1%}")
+            m5.metric("Confiança decisão", f"{row['decision_confidence']:.1%}")
+
+            s1, s2, s3, s4 = st.columns(4)
+            s1.metric("P(ROAS alvo)", f"{row['p_roas_target']:.1%}")
+            s2.metric("Mudança de regime", f"{row['regime_change_score']:.1%}")
+            s3.metric("Instabilidade", f"{row['instability_score']:.1%}")
+            s4.metric("Elasticidade resposta", f"{row['response_elasticity']:.3f}")
 
         display_cols = [
-            "level", "entity_id", "action_multiplier", "historical_spend",
-            "historical_roas", "expected_profit", "expected_roas", "p_profit",
-            "p_roas_target", "p_beats_hold", "cvar10_profit",
-            "expected_regret", "risk_adjusted_utility", "opportunity_score",
+            "level",
+            "entity_id",
+            "action_multiplier",
+            "historical_spend",
+            "historical_roas",
+            "expected_profit",
+            "expected_incremental_profit_vs_hold",
+            "expected_roas",
+            "p_profit",
+            "p_roas_target",
+            "p_beats_hold",
+            "p_action_optimal",
+            "cvar10_profit",
+            "expected_regret",
+            "regime_change_score",
+            "instability_score",
+            "response_elasticity",
+            "response_confidence",
+            "decision_confidence",
+            "risk_adjusted_utility",
+            "opportunity_score",
         ]
 
-        st.subheader("Melhores ações por entidade")
-        st.dataframe(
-            best[display_cols],
-            use_container_width=True,
-            hide_index=True,
+        tab_overall, tab_campaign, tab_adset, tab_ad, tab_all = st.tabs(
+            ["Decisões", "Campanhas", "Conjuntos", "Anúncios", "Todas as simulações"]
         )
 
-        st.subheader("Todas as ações simuladas")
-        level = st.selectbox("Filtrar nível", ["Todos", "account", "campaign", "adset", "ad"])
-        shown = all_actions if level == "Todos" else all_actions[all_actions["level"] == level]
-        st.dataframe(shown, use_container_width=True, hide_index=True)
+        with tab_overall:
+            st.dataframe(best[display_cols], use_container_width=True, hide_index=True)
+        with tab_campaign:
+            st.dataframe(
+                best[best["level"] == "campaign"][display_cols],
+                use_container_width=True,
+                hide_index=True,
+            )
+        with tab_adset:
+            st.dataframe(
+                best[best["level"] == "adset"][display_cols],
+                use_container_width=True,
+                hide_index=True,
+            )
+        with tab_ad:
+            st.dataframe(
+                best[best["level"] == "ad"][display_cols],
+                use_container_width=True,
+                hide_index=True,
+            )
+        with tab_all:
+            st.dataframe(all_actions, use_container_width=True, hide_index=True)
 
         st.download_button(
             "Baixar melhores ações (CSV)",
