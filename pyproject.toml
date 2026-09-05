@@ -18,6 +18,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+dev = [
+  "pytest>=8,<10"
+]
 deep = [
   "pymc>=6.2,<6.3",
   "arviz>=1.2,<2"
