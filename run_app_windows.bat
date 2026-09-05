@@ -2,12 +2,17 @@
 setlocal
 cd /d "%~dp0"
 
-if not exist ".venv" (
-    py -m venv .venv
+where uv >nul 2>nul
+if errorlevel 1 (
+    echo.
+    echo uv nao foi encontrado.
+    echo Instale pelo WinGet:
+    echo winget install --id=astral-sh.uv -e
+    echo.
+    exit /b 1
 )
 
-call .venv\Scripts\activate
-python -m pip install --upgrade pip
-pip install -e .
+uv sync --python 3.12
+if errorlevel 1 exit /b 1
 
-python -m streamlit run streamlit_app.py --server.address localhost
+uv run --python 3.12 streamlit run streamlit_app.py --server.address localhost
