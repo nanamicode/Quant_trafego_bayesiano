@@ -513,6 +513,10 @@ def simulate_action(
             draws,
             dtype=float,
         )
+        decision_profit = np.zeros(
+            draws,
+            dtype=float,
+        )
     else:
         impressions = np.maximum(
             np.round(
@@ -579,6 +583,24 @@ def simulate_action(
             context.cvr * eff,
             1e-9,
             1 - 1e-9,
+        )
+
+        conditional_clicks = (
+            impressions
+            * context.ctr
+        )
+        conditional_conversions = (
+            conditional_clicks
+            * cvr_scaled
+        )
+        conditional_revenue = (
+            conditional_conversions
+            * context.aov
+        )
+        decision_profit = (
+            conditional_revenue
+            * contribution_margin
+            - spend
         )
 
         clicks = rng.binomial(
@@ -685,4 +707,5 @@ def simulate_action(
         "var10_profit": float(q10),
         "cvar10_profit": cvar10,
         "_profit_draws": profit,
+        "_decision_profit_draws": decision_profit,
     }
