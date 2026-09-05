@@ -18,6 +18,6 @@ if errorlevel 1 exit /b 1
 echo.
 echo Dependencias profundas instaladas no ambiente Python 3.12.
 echo Use:
-echo uv run quant-trafego-mcmc --input "C:\caminho\planilha.xlsx" --output output_mcmc
+echo uv run quant-trafego-mcmc --input "C:\caminho\planilha.xlsx" --output output_mcmc --contribution-margin 0.40 --target-roas 2.0
 echo.
 cmd /k
