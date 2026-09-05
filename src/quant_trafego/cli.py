@@ -28,8 +28,8 @@ def main():
     parser.add_argument(
         "--contribution-margin",
         type=float,
-        default=1.0,
-        help="Margem de contribuição antes da mídia, de 0 a 1. Ex.: 0.40 = 40%%.",
+        required=True,
+        help="Obrigatória. Margem de contribuição antes da mídia, de 0 a 1. Ex.: 0.40 = 40%%.",
     )
     parser.add_argument("--horizon-days", type=int, default=7)
     parser.add_argument("--draws", type=int, default=0, help="0 = automático pelo hardware.")
