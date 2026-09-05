@@ -67,6 +67,10 @@ def load_ads_file(path: str | Path) -> pd.DataFrame:
         raise ValueError("Formato não suportado. Use .csv ou .xlsx.")
 
     df = df.rename(columns=_infer_mapping(df.columns))
+    if "campaign_id" in df.columns and "campaign_name" in df.columns:
+        cid = df["campaign_id"].astype(str).str.strip()
+        cname = df["campaign_name"].fillna("").astype(str).str.strip()
+        df = df.loc[~(cid.isin({"0", "0.0"}) & cname.eq(""))].copy()
     return df
 
 
