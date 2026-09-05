@@ -7,6 +7,7 @@ import tempfile
 import streamlit as st
 
 from quant_trafego.engine import BayesTrafficEngine, EngineConfig
+from quant_trafego.funnel import detect_funnel_schema, hierarchical_funnel_diagnostics
 from quant_trafego.hardware import detect_hardware
 from quant_trafego.io import filter_active, load_ads_file
 from quant_trafego.model_selection import compare_temporal_models
@@ -141,6 +142,8 @@ def main():
                 df = filter_active(df)
 
             quality = assess_data_quality(df)
+            funnel_schema = detect_funnel_schema(df)
+            funnel_detail = hierarchical_funnel_diagnostics(df)
             st.write(
                 f"Base: {quality.rows:,} linhas | {quality.days} dias | "
                 f"{quality.campaigns} campanhas | {quality.adsets} conjuntos | "
@@ -264,6 +267,8 @@ def main():
             extra_json = {}
             if allocation is not None:
                 extra_tables["allocation"] = allocation
+            if funnel_detail is not None and not funnel_detail.empty:
+                extra_tables["funnel_diagnostics"] = funnel_detail
             if model_comparison is not None and not model_comparison.empty:
                 extra_tables["temporal_model_comparison"] = model_comparison
             if model_decision is not None:
@@ -364,12 +369,13 @@ def main():
             "opportunity_score",
         ]
 
-        tab_overall, tab_campaign, tab_adset, tab_ad, tab_alloc, tab_validation, tab_all = st.tabs(
+        tab_overall, tab_campaign, tab_adset, tab_ad, tab_funnel, tab_alloc, tab_validation, tab_all = st.tabs(
             [
                 "Decisões",
                 "Campanhas",
                 "Conjuntos",
                 "Anúncios",
+                "Funil",
                 "Alocação global",
                 "Validação",
                 "Todas as simulações",
@@ -395,6 +401,25 @@ def main():
                 use_container_width=True,
                 hide_index=True,
             )
+        with tab_funnel:
+            if funnel_detail.empty:
+                st.info("Nenhuma transição adicional de funil disponível.")
+            else:
+                st.caption(
+                    "Etapas detectadas: "
+                    + " → ".join(funnel_schema.available_stages)
+                )
+                st.dataframe(
+                    funnel_detail,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                violations = int(funnel_detail["tracking_violation_rows"].sum())
+                if violations > 0:
+                    st.warning(
+                        f"Foram detectadas {violations} violações de monotonicidade do funil; "
+                        "essas transições não recebem posterior Binomial quando inválidas."
+                    )
         with tab_alloc:
             if allocation is None:
                 st.warning(allocation_summary.get("reason", "Alocação indisponível."))
