@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 
 from .engine import BayesTrafficEngine, EngineConfig
+from .funnel import hierarchical_funnel_diagnostics
 from .hardware import detect_hardware
 from .io import filter_active, load_ads_file
 from .quality import assess_data_quality
@@ -68,7 +69,13 @@ def main():
         )
     engine = BayesTrafficEngine(config)
     all_actions, best = engine.run(df)
+    funnel_detail = hierarchical_funnel_diagnostics(df)
     write_reports(all_actions, best, args.output)
+    if not funnel_detail.empty:
+        funnel_detail.to_csv(
+            __import__("pathlib").Path(args.output) / "funnel_diagnostics.csv",
+            index=False,
+        )
 
     manifest = build_run_manifest(
         df,
@@ -82,7 +89,17 @@ def main():
     )
     write_run_manifest(manifest, args.output)
     workspace = LocalWarehouse(args.workspace)
-    run_dir = workspace.persist_run(df, manifest, all_actions, best)
+    run_dir = workspace.persist_run(
+        df,
+        manifest,
+        all_actions,
+        best,
+        extra_tables=(
+            {"funnel_diagnostics": funnel_detail}
+            if not funnel_detail.empty
+            else None
+        ),
+    )
     print(f"Run auditável: {run_dir}")
 
     cols = [
