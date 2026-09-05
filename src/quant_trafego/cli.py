@@ -4,7 +4,7 @@ import argparse
 from dataclasses import asdict
 from pathlib import Path
 
-from .action_plan import build_operational_action_plan, write_operational_action_plan
+from .action_plan import build_operational_action_plan, derive_account_budget_target, write_operational_action_plan
 from .engine import BayesTrafficEngine, EngineConfig
 from .funnel import hierarchical_funnel_diagnostics
 from .hardware import detect_hardware
@@ -80,6 +80,11 @@ def main():
         )
     engine = BayesTrafficEngine(config)
     all_actions, best = engine.run(df)
+    account_budget_target = derive_account_budget_target(
+        best,
+        source_df=df,
+        horizon_days=config.horizon_days,
+    )
     allocation = None
     allocation_summary = None
     try:
@@ -87,11 +92,13 @@ def main():
             all_actions,
             df,
             contribution_margin=config.contribution_margin,
+            total_budget=account_budget_target["recommended_horizon_amount"],
         )
     except Exception as portfolio_exc:
         try:
             allocation, allocation_summary = optimize_campaign_allocation(
-                all_actions
+                all_actions,
+                total_budget=account_budget_target["recommended_horizon_amount"],
             )
             allocation_summary["fallback_reason"] = str(portfolio_exc)
         except Exception as allocation_exc:
@@ -119,6 +126,7 @@ def main():
         best,
         allocation=allocation,
         adset_allocation=adset_allocation,
+        account_budget_target=account_budget_target,
         source_df=df,
         horizon_days=config.horizon_days,
     )
@@ -140,7 +148,8 @@ def main():
             "quality_score": quality.score,
             "quality_warnings": list(quality.warnings),
             "quality_report": asdict(quality),
-            "allocation_summary": allocation_summary,
+            "account_budget_target": account_budget_target,
+                    "allocation_summary": allocation_summary,
             "adset_allocation_summary": adset_allocation_summary,
         },
     )
