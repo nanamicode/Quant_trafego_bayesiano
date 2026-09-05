@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.8.0
+
+- contrafactuais de orçamento passam a compartilhar os mesmos mundos latentes posteriores;
+- P(ação > manter), P(ação ótima) e regret usam lucro condicional pareado, separado do ruído realizado usado em risco;
+- seeds estáveis tornam resultados invariantes à ordem da grade de ações;
+- elasticidade observacional gasto→conversões passa a controlar tendência linear/quadrática e dia da semana;
+- confiança da resposta depende da variação de gasto identificável após os controles;
+- sazonalidade semanal encolhida de CTR/CVR integrada ao horizonte futuro;
+- baseline sazonal distinto para posterior agregado e estado corrente MCMC;
+- qualidade da base passa a auditar calendário, gaps, tracking, numéricos, densidade e sobreposição de campanhas;
+- qualidade da base reduz o score decisório e pode bloquear scale-up;
+- correlações de portfólio passam a usar shrinkage por sobreposição temporal de cada par de campanhas;
+- otimizadores MILP/CVaR passam a respeitar policy_eligible como restrição dura;
+- NUTS não convergido cai para Empirical Bayes para decisões;
+- PPC reprovado preserva posterior apenas para diagnóstico e bloqueia scale-up;
+- ADVI aprovado continua explicitamente aproximado e recebe cap padrão de 1.2x;
+- decision_confidence é mantido apenas como alias retrocompatível; a UI usa decision_score, explicitamente não calibrado;
+- promoção de modelo temporal usa mediana robusta de melhorias, maioria de métricas e veto a regressão material;
+- CI passa a testar o commit exato, compilar todo src e executar smoke dos CLIs.
+
 ## 0.7.0
 
 - MCMC profundo migrado para painel diário;
