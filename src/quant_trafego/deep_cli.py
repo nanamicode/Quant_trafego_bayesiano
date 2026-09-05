@@ -27,7 +27,7 @@ def main():
     parser.add_argument("--output", default="output_mcmc")
     parser.add_argument("--workspace", default="workspace")
     parser.add_argument("--target-roas", type=float, default=2.0)
-    parser.add_argument("--contribution-margin", type=float, default=1.0)
+    parser.add_argument("--contribution-margin", type=float, required=True)
     parser.add_argument("--horizon-days", type=int, default=7)
     parser.add_argument(
         "--mc-draws",
