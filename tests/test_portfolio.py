@@ -1,5 +1,6 @@
 import pandas as pd
 
+from quant_trafego.optimization import AllocationConfig
 from quant_trafego.portfolio import (
     PortfolioRiskConfig,
     estimate_campaign_correlation,
@@ -118,3 +119,66 @@ def test_portfolio_cannot_override_engine_policy_eligibility():
         ),
     )
     assert (selected["action_multiplier"] <= 1.0).all()
+
+
+def test_portfolio_uses_revenue_only_as_near_optimal_tiebreak():
+    actions = pd.DataFrame(
+        [
+            {
+                "level": "campaign",
+                "entity_id": "c1",
+                "action_multiplier": 1.0,
+                "expected_spend": 100.0,
+                "expected_profit": 100.0,
+                "expected_revenue": 500.0,
+                "profit_p05": 80.0,
+                "profit_p50": 100.0,
+                "profit_p95": 120.0,
+                "p_profit": 0.95,
+                "p_incremental_profit_positive": 0.8,
+                "response_confidence": 0.30,
+            },
+            {
+                "level": "campaign",
+                "entity_id": "c1",
+                "action_multiplier": 1.2,
+                "expected_spend": 120.0,
+                "expected_profit": 99.0,
+                "expected_revenue": 900.0,
+                "profit_p05": 79.0,
+                "profit_p50": 99.0,
+                "profit_p95": 119.0,
+                "p_profit": 0.95,
+                "p_incremental_profit_positive": 0.8,
+                "response_confidence": 0.30,
+            },
+        ]
+    )
+    history = pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp("2026-01-01") + pd.Timedelta(days=day),
+                "campaign_id": "c1",
+                "spend": 100.0,
+                "revenue": 220.0,
+            }
+            for day in range(30)
+        ]
+    )
+    selected, summary = optimize_campaign_portfolio(
+        actions,
+        history,
+        contribution_margin=1.0,
+        total_budget=120.0,
+        allocation_config=AllocationConfig(
+            revenue_tiebreak=True,
+            revenue_tiebreak_tolerance=0.02,
+        ),
+        risk_config=PortfolioRiskConfig(
+            scenarios=120,
+            seed=9,
+            cvar_weight=0.0,
+        ),
+    )
+    assert selected.iloc[0]["action_multiplier"] == 1.2
+    assert summary["expected_portfolio_revenue"] == 900.0
