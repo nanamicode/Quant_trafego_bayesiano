@@ -835,16 +835,33 @@ class BayesTrafficEngine:
         campaign_posts = {}
         campaign_response = {}
         campaign_source = {}
+        campaign_external_parent = {}
+        campaign_external_response = {}
+
         for campaign_id, cdf in df.groupby("campaign_id", sort=False):
             if (
                 active_campaigns is not None
                 and str(campaign_id) not in active_campaigns
             ):
                 continue
+
+            other_campaigns = df[
+                df["campaign_id"].astype(str)
+                != str(campaign_id)
+            ].copy()
+            external_parent = self._external_parent(
+                other_campaigns,
+                df,
+            )
+            external_response = (
+                estimate_response(other_campaigns)
+                if not other_campaigns.empty
+                else context_response
+            )
+
             fallback = self._posterior(
                 cdf,
-                context_global_ctr,
-                context_global_cvr,
+                *external_parent,
                 self.config.campaign_ctr_strength,
                 self.config.campaign_cvr_strength,
             )
@@ -854,10 +871,16 @@ class BayesTrafficEngine:
                 campaign_id,
                 fallback,
             )
-            response = estimate_response(cdf, parent=context_response)
+            response = estimate_response(
+                cdf,
+                parent=external_response,
+            )
             campaign_posts[campaign_id] = posts
             campaign_response[campaign_id] = response
             campaign_source[campaign_id] = source
+            campaign_external_parent[campaign_id] = external_parent
+            campaign_external_response[campaign_id] = external_response
+
             if "campaign" in requested_levels:
                 rows.extend(
                     self._evaluate_entity(
@@ -873,6 +896,8 @@ class BayesTrafficEngine:
 
         adset_posts = {}
         adset_response = {}
+        adset_external_parent = {}
+        adset_external_response = {}
         adset_groups = (
             df.groupby(
                 ["campaign_id", "adset_id"],
@@ -892,9 +917,38 @@ class BayesTrafficEngine:
                 continue
             if campaign_id not in campaign_posts:
                 continue
+
+            campaign_df = df[
+                df["campaign_id"].astype(str)
+                == str(campaign_id)
+            ]
+            sibling_adsets = campaign_df[
+                campaign_df["adset_id"].astype(str)
+                != str(adset_id)
+            ].copy()
+
+            if not sibling_adsets.empty:
+                parent_for_adset = self._posterior(
+                    sibling_adsets,
+                    *campaign_external_parent[campaign_id],
+                    self.config.campaign_ctr_strength,
+                    self.config.campaign_cvr_strength,
+                )
+                parent_response = estimate_response(
+                    sibling_adsets,
+                    parent=campaign_external_response[campaign_id],
+                )
+            else:
+                parent_for_adset = campaign_external_parent[
+                    campaign_id
+                ]
+                parent_response = campaign_external_response[
+                    campaign_id
+                ]
+
             fallback = self._posterior(
                 sdf,
-                *campaign_posts[campaign_id],
+                *parent_for_adset,
                 self.config.adset_ctr_strength,
                 self.config.adset_cvr_strength,
             )
@@ -906,10 +960,16 @@ class BayesTrafficEngine:
             )
             response = estimate_response(
                 sdf,
-                parent=campaign_response[campaign_id],
+                parent=parent_response,
             )
             adset_posts[(campaign_id, adset_id)] = posts
             adset_response[(campaign_id, adset_id)] = response
+            adset_external_parent[(campaign_id, adset_id)] = (
+                parent_for_adset
+            )
+            adset_external_response[(campaign_id, adset_id)] = (
+                parent_response
+            )
             if "adset" in requested_levels:
                 rows.extend(
                     self._evaluate_entity(
@@ -939,9 +999,48 @@ class BayesTrafficEngine:
                 continue
             if (campaign_id, adset_id) not in adset_posts:
                 continue
+
+            adset_df = df[
+                (
+                    df["campaign_id"].astype(str)
+                    == str(campaign_id)
+                )
+                & (
+                    df["adset_id"].astype(str)
+                    == str(adset_id)
+                )
+            ]
+            sibling_ads = adset_df[
+                adset_df["ad_id"].astype(str)
+                != str(ad_id)
+            ].copy()
+
+            if not sibling_ads.empty:
+                parent_for_ad = self._posterior(
+                    sibling_ads,
+                    *adset_external_parent[
+                        (campaign_id, adset_id)
+                    ],
+                    self.config.adset_ctr_strength,
+                    self.config.adset_cvr_strength,
+                )
+                parent_response = estimate_response(
+                    sibling_ads,
+                    parent=adset_external_response[
+                        (campaign_id, adset_id)
+                    ],
+                )
+            else:
+                parent_for_ad = adset_external_parent[
+                    (campaign_id, adset_id)
+                ]
+                parent_response = adset_external_response[
+                    (campaign_id, adset_id)
+                ]
+
             fallback = self._posterior(
                 adf,
-                *adset_posts[(campaign_id, adset_id)],
+                *parent_for_ad,
                 self.config.ad_ctr_strength,
                 self.config.ad_cvr_strength,
             )
@@ -953,7 +1052,7 @@ class BayesTrafficEngine:
             )
             response = estimate_response(
                 adf,
-                parent=adset_response[(campaign_id, adset_id)],
+                parent=parent_response,
             )
             rows.extend(
                 self._evaluate_entity(
