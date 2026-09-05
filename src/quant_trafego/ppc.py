@@ -72,7 +72,14 @@ def posterior_predictive_checks(
         ctr_entity = idata.posterior["ctr_p_entity"]
         cvr_entity = idata.posterior["cvr_p_entity"]
         entity_size = ctr_entity.sizes.get("entity", -1)
-        use_entity = has_date and len(daily) == entity_size
+        attribution_violation = bool(
+            (daily["conversions"] > daily["clicks"]).any()
+        )
+        use_entity = (
+            has_date
+            and len(daily) == entity_size
+            and not attribution_violation
+        )
     except Exception:
         ctr_entity = None
         cvr_entity = None
