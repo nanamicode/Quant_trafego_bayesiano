@@ -363,7 +363,7 @@ def main():
             m2.metric("Lucro esperado", _fmt_money(row["expected_profit"]))
             m3.metric("P(lucro)", f"{row['p_profit']:.1%}")
             m4.metric("P(ação ótima)", f"{row['p_action_optimal']:.1%}")
-            m5.metric("Confiança decisão", f"{row['decision_confidence']:.1%}")
+            m5.metric("Score decisão", f"{row['decision_score']:.1%}")
 
             s1, s2, s3, s4 = st.columns(4)
             s1.metric("P(ROAS alvo)", f"{row['p_roas_target']:.1%}")
@@ -393,7 +393,7 @@ def main():
             "instability_score",
             "response_elasticity",
             "response_confidence",
-            "decision_confidence",
+            "decision_score",
             "risk_adjusted_utility",
             "opportunity_score",
         ]
