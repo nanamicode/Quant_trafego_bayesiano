@@ -55,3 +55,34 @@ def test_quality_reports_missing_core_columns_without_crashing():
     report = assess_data_quality(df)
     assert "spend" in report.missing_core_columns
     assert report.score < 50
+
+
+def test_quality_does_not_penalize_valid_meta_daily_attribution_lag():
+    df = pd.DataFrame(
+        [
+            {
+                "date": "2026-09-01",
+                "campaign_id": "c1",
+                "adset_id": "s1",
+                "ad_id": "a1",
+                "impressions": 1000,
+                "clicks": 0,
+                "conversions": 1,
+                "spend": 10.0,
+                "revenue": 100.0,
+            },
+            {
+                "date": "2026-09-02",
+                "campaign_id": "c1",
+                "adset_id": "s1",
+                "ad_id": "a1",
+                "impressions": 1000,
+                "clicks": 20,
+                "conversions": 0,
+                "spend": 10.0,
+                "revenue": 0.0,
+            },
+        ]
+    )
+    report = assess_data_quality(df)
+    assert report.funnel_tracking_violation_rows == 0
