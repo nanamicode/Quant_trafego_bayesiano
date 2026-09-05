@@ -18,6 +18,8 @@ class LocalWarehouse:
         self.root.mkdir(parents=True, exist_ok=True)
         self.snapshots_dir = self.root / "snapshots"
         self.snapshots_dir.mkdir(parents=True, exist_ok=True)
+        self.runs_dir = self.root / "runs"
+        self.runs_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = self.root / "quant_trafego.duckdb"
         self._init_schema()
 
@@ -88,6 +90,27 @@ class LocalWarehouse:
                     json.dumps(manifest, ensure_ascii=False, default=str),
                 ],
             )
+
+    def persist_run(
+        self,
+        df: pd.DataFrame,
+        manifest: dict[str, Any],
+        all_actions: pd.DataFrame | None = None,
+        best_actions: pd.DataFrame | None = None,
+    ) -> Path:
+        self.store_snapshot(df, manifest["data_sha256"])
+        run_dir = self.runs_dir / manifest["run_id"]
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "run_manifest.json").write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
+        if all_actions is not None:
+            all_actions.to_csv(run_dir / "all_actions.csv", index=False)
+        if best_actions is not None:
+            best_actions.to_csv(run_dir / "best_actions.csv", index=False)
+        self.register_run(manifest)
+        return run_dir
 
     def list_runs(self) -> pd.DataFrame:
         with self.connect() as con:
