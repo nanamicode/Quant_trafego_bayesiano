@@ -316,6 +316,197 @@ def _budget_reference(
     )
 
 
+def derive_account_budget_target(
+    best_actions: pd.DataFrame,
+    *,
+    source_df: pd.DataFrame | None = None,
+    horizon_days: int = 7,
+    recent_spend_days: int = 7,
+) -> dict:
+    """
+    Translate the approved account action into an absolute capital envelope.
+
+    Explicit campaign budgets are preferred. Otherwise recent observed account
+    spend is used. The returned horizon amount is the budget constraint passed
+    to the campaign portfolio optimizer.
+    """
+    account = best_actions[
+        best_actions["level"] == "account"
+    ]
+    if account.empty:
+        raise ValueError(
+            "A decisão da conta é necessária para definir o capital total."
+        )
+    row = account.iloc[0]
+    multiplier = float(
+        row["action_multiplier"]
+    )
+
+    current_daily = None
+    basis = None
+
+    if (
+        source_df is not None
+        and "campaign_daily_budget" in source_df.columns
+        and "campaign_id" in source_df.columns
+    ):
+        tmp = source_df.copy()
+        if "date" in tmp.columns:
+            tmp["date"] = pd.to_datetime(
+                tmp["date"],
+                errors="coerce",
+            )
+            latest = tmp["date"].max()
+            if pd.notna(latest):
+                tmp = tmp[
+                    tmp["date"] == latest
+                ]
+
+        tmp["campaign_daily_budget"] = pd.to_numeric(
+            tmp["campaign_daily_budget"],
+            errors="coerce",
+        )
+        budgets = (
+            tmp.dropna(
+                subset=[
+                    "campaign_id",
+                    "campaign_daily_budget",
+                ]
+            )
+            .groupby(
+                "campaign_id"
+            )["campaign_daily_budget"]
+            .median()
+        )
+        budgets = budgets[
+            np.isfinite(budgets)
+            & (budgets >= 0)
+        ]
+        if not budgets.empty:
+            current_daily = float(
+                budgets.sum()
+            )
+            basis = "sum_current_campaign_daily_budgets"
+
+    if current_daily is None and source_df is not None:
+        if (
+            "date" in source_df.columns
+            and "spend" in source_df.columns
+        ):
+            tmp = source_df.copy()
+            tmp["date"] = pd.to_datetime(
+                tmp["date"],
+                errors="coerce",
+            )
+            tmp["spend"] = pd.to_numeric(
+                tmp["spend"],
+                errors="coerce",
+            )
+            tmp = tmp.dropna(
+                subset=[
+                    "date",
+                    "spend",
+                ]
+            )
+            daily = (
+                tmp.groupby(
+                    "date",
+                    as_index=False,
+                )["spend"]
+                .sum()
+                .sort_values("date")
+                .tail(
+                    max(
+                        int(recent_spend_days),
+                        1,
+                    )
+                )
+            )
+            if not daily.empty:
+                current_daily = float(
+                    daily["spend"].mean()
+                )
+                basis = (
+                    f"recent_{int(recent_spend_days)}d_account_daily_spend"
+                )
+
+    if current_daily is None:
+        historical_days = max(
+            float(
+                row.get(
+                    "historical_days",
+                    1.0,
+                )
+            ),
+            1.0,
+        )
+        current_daily = (
+            max(
+                float(
+                    row.get(
+                        "historical_spend",
+                        0.0,
+                    )
+                ),
+                0.0,
+            )
+            / historical_days
+        )
+        basis = "historical_account_daily_spend"
+
+    recommended_daily = (
+        current_daily
+        * multiplier
+    )
+    horizon = max(
+        int(horizon_days),
+        1,
+    )
+
+    return {
+        "action_multiplier": multiplier,
+        "amount_basis": basis,
+        "current_daily_amount": current_daily,
+        "recommended_daily_amount": recommended_daily,
+        "daily_amount_change": (
+            recommended_daily
+            - current_daily
+        ),
+        "horizon_days": horizon,
+        "current_horizon_amount": (
+            current_daily
+            * horizon
+        ),
+        "recommended_horizon_amount": (
+            recommended_daily
+            * horizon
+        ),
+        "horizon_amount_change": (
+            recommended_daily
+            - current_daily
+        )
+        * horizon,
+        "p_profit": float(
+            row.get(
+                "p_profit",
+                np.nan,
+            )
+        ),
+        "p_incremental_profit_positive": float(
+            row.get(
+                "p_incremental_profit_positive",
+                np.nan,
+            )
+        ),
+        "decision_score": float(
+            row.get(
+                "decision_score",
+                np.nan,
+            )
+        ),
+    }
+
+
 def build_operational_action_plan(
     best_actions: pd.DataFrame,
     *,
