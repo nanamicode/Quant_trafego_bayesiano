@@ -12,6 +12,7 @@ from .mcmc import (
     posterior_rate_overrides,
     save_mcmc_result,
 )
+from .ppc import PPCSummary, posterior_predictive_checks
 from .report import write_reports
 
 
@@ -22,6 +23,8 @@ class DeepAnalysisResult:
     diagnostics: MCMCDiagnostics
     idata: object
     mapping: dict
+    ppc_detail: pd.DataFrame
+    ppc_summary: PPCSummary
 
 
 def run_deep_analysis(
@@ -54,6 +57,13 @@ def run_deep_analysis(
         return_mapping=True,
     )
 
+    ppc_detail, ppc_summary = posterior_predictive_checks(
+        idata,
+        clean,
+        mapping,
+        seed=seed + 1000,
+    )
+
     overrides = posterior_rate_overrides(idata, mapping)
     all_actions, best_actions = engine.run(
         clean,
@@ -68,11 +78,18 @@ def run_deep_analysis(
     best_actions["mcmc_max_rhat"] = diagnostics.max_rhat
     best_actions["mcmc_min_ess_bulk"] = diagnostics.min_ess_bulk
     best_actions["mcmc_divergences"] = diagnostics.divergences
+    best_actions["ppc_status"] = ppc_summary.status
+    best_actions["ppc_click_90_coverage"] = ppc_summary.click_90_coverage
+    best_actions["ppc_conversion_90_coverage"] = ppc_summary.conversion_90_coverage
 
     if output_dir is not None:
         out = Path(output_dir)
         write_reports(all_actions, best_actions, out)
         save_mcmc_result(idata, diagnostics, out, mapping=mapping)
+        ppc_detail.to_csv(out / "posterior_predictive_checks.csv", index=False)
+        pd.DataFrame([ppc_summary.__dict__]).to_csv(
+            out / "posterior_predictive_summary.csv", index=False
+        )
 
     return DeepAnalysisResult(
         all_actions=all_actions,
@@ -80,4 +97,6 @@ def run_deep_analysis(
         diagnostics=diagnostics,
         idata=idata,
         mapping=mapping,
+        ppc_detail=ppc_detail,
+        ppc_summary=ppc_summary,
     )
