@@ -481,12 +481,30 @@ class BayesTrafficEngine:
                 temporal.ctr_current_logit_shift
                 * temporal.ctr_current_shift_confidence
             )
+        else:
+            # Deep CTR posterior already carries the current time state.
+            current_ctr_shift = 0.0
+
+        if (
+            self.config.use_temporal
+            and self.config.attribution_safe_cvr_temporal
+        ):
+            # Deep CVR likelihood is intentionally aggregated by ad because
+            # Meta attribution is asynchronous, so it still needs a recent
+            # aggregate level anchor just like the fast posterior.
+            current_cvr_shift = (
+                temporal.cvr_current_logit_shift
+                * temporal.cvr_current_shift_confidence
+            )
+        elif (
+            self.config.use_temporal
+            and posterior_source != "mcmc"
+        ):
             current_cvr_shift = (
                 temporal.cvr_current_logit_shift
                 * temporal.cvr_current_shift_confidence
             )
         else:
-            current_ctr_shift = 0.0
             current_cvr_shift = 0.0
 
         response_confidence = (
