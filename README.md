@@ -2,27 +2,47 @@
 
 Motor quantitativo Bayesiano local para tráfego pago.
 
-A hierarquia analisada é:
+Hierarquia principal:
 
 `conta → campanha → conjunto → anúncio`
 
-O sistema usa a visão global para estabilizar entidades com pouca amostra e aumenta a independência estatística de cada nível conforme a evidência própria cresce.
+O objetivo é transformar planilhas históricas de mídia em inferência probabilística auditável, validação fora da amostra e decisões econômicas sob incerteza — sem servidor pago.
 
-## Execução local
+## Ambiente oficial
 
-Não há servidor obrigatório nem custo de infraestrutura.
+O runtime é **Python 3.12**.
 
-### Interface local
+O projeto usa **uv** para criar o ambiente, selecionar a versão correta do Python e manter dependências reproduzíveis.
 
-No Windows:
+No Windows, se uv ainda não estiver instalado:
+
+```bat
+winget install --id=astral-sh.uv -e
+```
+
+Depois:
 
 ```bat
 run_app_windows.bat
 ```
 
-A interface abre em `localhost`. O arquivo é processado no próprio computador.
+A interface roda somente em `localhost`.
 
-### Modo profundo
+## Modos de inferência
+
+### Hierárquico rápido
+
+Empirical Bayes + partial pooling + Monte Carlo.
+
+Uso principal:
+
+- screening;
+- análise diária;
+- backtesting com muitas origens;
+- diagnóstico rápido;
+- desenvolvimento.
+
+### MCMC hierárquico profundo
 
 Instale uma vez:
 
@@ -30,91 +50,129 @@ Instale uma vez:
 install_deep_windows.bat
 ```
 
-Depois o modo **MCMC hierárquico profundo** passa a ficar disponível na mesma interface.
-
-Também é possível rodar pelo terminal:
+Depois selecione **MCMC hierárquico profundo** na interface ou rode:
 
 ```bat
-quant-trafego-mcmc --input "C:\dados\meta.xlsx" --output output_mcmc --contribution-margin 0.40 --target-roas 2.0
+uv run quant-trafego-mcmc --input "C:\dados\meta.xlsx" --output output_mcmc --contribution-margin 0.40 --target-roas 2.0
 ```
 
-## Dois motores de inferência
+O modelo PyMC produz posteriores por conta, campanha, conjunto e anúncio. NUTS registra R-hat, ESS e divergências. ADVI é usado apenas como fallback aproximado para estruturas grandes e permanece marcado como aproximação.
 
-### Hierárquico rápido
+## Validação probabilística
 
-Usa Empirical Bayes/partial pooling. É indicado para exploração, testes e análises frequentes.
+Backtesting temporal é parte da arquitetura, não um relatório opcional.
 
-### MCMC hierárquico profundo
+Exemplo:
 
-Usa PyMC com efeitos aleatórios não centrados em:
+```bat
+uv run quant-trafego-backtest --input "C:\dados\meta.xlsx" --output backtest_output --horizon-days 7 --min-train-days 21
+```
 
-- conta;
-- campanha;
-- conjunto;
-- anúncio.
+O protocolo rolling-origin:
 
-CTR e CVR recebem posteriores próprios em todos os níveis. Esses posteriores alimentam diretamente a árvore econômica de Monte Carlo.
+1. treina somente com o passado disponível;
+2. prevê a próxima janela;
+3. compara a distribuição prevista com o que realmente ocorreu;
+4. avança a origem;
+5. repete.
 
-Em `auto`:
+Métricas atuais:
 
-- até 300 anúncios: NUTS;
-- acima disso: ADVI, para limitar custo computacional.
+- Brier score de lucro;
+- Brier score de ROAS alvo;
+- calibration gap;
+- cobertura do intervalo de 90%;
+- largura/sharpness do intervalo;
+- interval score;
+- bias de lucro;
+- MAE de lucro.
 
-No NUTS são registrados:
+Esse backtest valida previsão sob a política observada. Ele **não** revela o contrafactual de uma ação de orçamento que não foi tomada.
 
-- R-hat máximo;
-- ESS bulk mínimo;
-- divergências;
-- status de convergência.
+## Causalidade
 
-## Componentes quantitativos já implementados
+A elasticidade histórica gasto → conversões é tratada como **observacional**.
+
+O sistema não deve transformar automaticamente correlação histórica em efeito causal de aumentar orçamento.
+
+A arquitetura distingue níveis de evidência:
+
+- `predictive`;
+- `observational_intervention`;
+- `experiment_calibrated`.
+
+Decisões agressivas de alocação devem receber restrições mais conservadoras quando a resposta ao gasto não tiver calibração experimental.
+
+## Warehouse local e auditoria
+
+Cada execução pode ser persistida localmente em:
+
+```text
+workspace/
+├── quant_trafego.duckdb
+├── snapshots/
+│   └── <sha256>.parquet
+└── runs/
+    └── <run_id>/
+        ├── run_manifest.json
+        ├── all_actions.csv
+        └── best_actions.csv
+```
+
+O snapshot da planilha é deduplicado por SHA-256.
+
+O `run_manifest.json` registra:
+
+- hash dos dados;
+- configuração;
+- seed;
+- versão do pacote;
+- commit Git quando disponível;
+- Python;
+- versões científicas;
+- hardware;
+- método de inferência;
+- timestamp UTC;
+- diagnósticos adicionais.
+
+## Componentes quantitativos implementados
 
 - posterior hierárquico de CTR e CVR;
 - partial pooling conta → campanha → conjunto → anúncio;
-- derivada temporal de CTR e CVR no espaço logit;
-- comparação probabilística recente × histórico;
-- score de mudança de regime;
-- score de instabilidade;
-- elasticidade observacional gasto → conversões;
+- derivadas temporais no espaço logit;
+- comparação recente × histórico;
+- mudança de regime;
+- instabilidade;
+- elasticidade observacional de resposta ao gasto;
 - shrinkage hierárquico da elasticidade;
-- fallback de saturação por curva de Hill;
-- Monte Carlo econômico por ação;
+- fallback Hill;
+- Monte Carlo econômico;
+- intervalos preditivos;
 - margem de contribuição;
-- probabilidade de lucro;
-- probabilidade de ruína;
-- probabilidade de bater ROAS alvo;
-- probabilidade de superar manter;
-- probabilidade de cada ação ser a ótima;
-- lucro incremental esperado contra manter;
-- VaR 10%;
-- CVaR 10%;
+- P(lucro);
+- P(ruína);
+- P(ROAS ≥ meta);
+- P(ação > manter);
+- P(ação ótima entre alternativas);
+- lucro incremental esperado;
+- VaR;
+- CVaR;
 - expected regret;
 - utilidade ajustada a risco;
-- score de confiança da decisão;
-- dimensionamento automático conforme CPU/RAM;
-- diagnóstico estrutural da planilha.
-
-## Ações simuladas atualmente
-
-```text
-0.0x   pausar
-0.5x   reduzir 50%
-0.8x   reduzir 20%
-1.0x   manter
-1.2x   aumentar 20%
-1.5x   aumentar 50%
-2.0x   dobrar
-```
+- decisão com score de confiança;
+- autodetecção de CPU/RAM;
+- qualidade estrutural da base;
+- rolling-origin backtesting;
+- persistência DuckDB/Parquet;
+- manifestos reproduzíveis.
 
 ## Lucro econômico
 
-O motor usa:
-
 ```text
-lucro = receita × margem de contribuição − mídia
+lucro = receita × margem de contribuição − gasto de mídia
 ```
 
-e não confunde receita com lucro.
+O motor não usa faturamento como sinônimo de lucro.
 
 ## Entrada mínima
 
@@ -130,27 +188,18 @@ spend
 revenue
 ```
 
-CSV e XLSX são aceitos. Há aliases comuns de exportação em `src/quant_trafego/io.py`.
+CSV e XLSX são aceitos.
 
-## Saídas
+## Ferramentas e papéis
 
-- `all_actions.csv`;
-- `best_actions.csv`;
-- `summary.md`;
-- no modo profundo: `hierarchical_funnel.nc`, `mcmc_diagnostics.csv` e `mcmc_entity_mapping.csv`.
+- **PyMC**: inferência Bayesiana profunda;
+- **ArviZ**: diagnósticos;
+- **DuckDB/Parquet**: armazenamento analítico local;
+- **PyMC-Marketing**: MMM, adstock, saturação, incrementality e calibração quando o nível agregado for apropriado;
+- **Meridian**: modelo independente de MMM agregado/calibração, não núcleo ad-level;
+- **BoTorch/Ax**: futura otimização global sob restrições, somente depois de validar a função de resposta;
+- **MABWiser**: futura exploração sequencial quando existir feedback recorrente.
 
-## Próximas camadas
+As decisões metodológicas e alternativas rejeitadas ficam registradas em `docs/ARCHITECTURE_DECISIONS.md`.
 
-As próximas evoluções planejadas são:
-
-- posterior predictive checks mais extensos;
-- modelo temporal dinâmico em estado-espaço;
-- adstock e saturação aprendidos com PyMC-Marketing;
-- otimização global de orçamento via Ax/BoTorch;
-- Thompson Sampling/contextual bandits;
-- calibração experimental e incrementalidade;
-- comparação de modelos e backtesting temporal.
-
-Veja `ARCHITECTURE.md`.
-
-> As probabilidades são condicionais aos dados observados e às hipóteses do modelo; não constituem garantia de resultado financeiro.
+> Uma técnica só deve virar padrão se melhorar calibração/score fora da amostra de forma consistente e com custo computacional justificável.
