@@ -62,3 +62,23 @@ def test_deep_advi_daily_panel_smoke():
     )
     assert len(detail) == 12
     assert summary.n_observations == 12
+
+
+def test_deep_nuts_api_smoke():
+    df = _tiny_daily_panel()
+    idata, diagnostics, mapping = fit_hierarchical_funnel(
+        df,
+        method="nuts",
+        draws=30,
+        tune=30,
+        chains=2,
+        cores=1,
+        target_accept=0.85,
+        seed=11,
+        return_mapping=True,
+    )
+    assert diagnostics.method == "nuts"
+    assert diagnostics.n_days == 6
+    assert diagnostics.divergences is not None
+    assert "ctr_p_account_current" in idata.posterior
+    assert ("campaign", "c1") in posterior_rate_overrides(idata, mapping)
