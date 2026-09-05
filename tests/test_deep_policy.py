@@ -57,3 +57,12 @@ def test_valid_nuts_is_allowed_to_drive_decisions():
     )
     assert source == "mcmc_validated"
     assert guardrail == "none"
+
+
+def test_advi_pass_still_receives_approximation_scale_cap():
+    source, guardrail = deep_decision_policy(
+        _diag("advi", None),
+        _ppc("pass"),
+    )
+    assert source == "mcmc_advi_approximate"
+    assert guardrail == "advi_approximation_scale_cap"
