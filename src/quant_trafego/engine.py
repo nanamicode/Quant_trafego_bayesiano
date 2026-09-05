@@ -254,6 +254,9 @@ class BayesTrafficEngine:
                 "response_elasticity": response_estimate.elasticity_mean,
                 "response_elasticity_sd": response_estimate.elasticity_sd,
                 "response_confidence": response_estimate.confidence,
+                "response_independent_spend_sd": response_estimate.independent_spend_sd,
+                "response_effective_days": response_estimate.effective_days,
+                "response_controls": response_estimate.controls,
                 "p_diminishing_returns_proxy": (
                     response_estimate.diminishing_returns_probability_proxy
                 ),
