@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quant-trafego-bayesiano"
-version = "0.3.0"
+version = "0.4.0"
 description = "Analisador quantitativo Bayesiano local para tráfego pago"
 requires-python = ">=3.10"
 dependencies = [
@@ -12,11 +12,27 @@ dependencies = [
   "pandas>=2.0",
   "scipy>=1.11",
   "openpyxl>=3.1",
-  "streamlit>=1.40"
+  "streamlit>=1.40",
+  "psutil>=5.9"
+]
+
+[project.optional-dependencies]
+deep = [
+  "pymc",
+  "arviz"
+]
+optimization = [
+  "botorch",
+  "ax-platform",
+  "mabwiser"
+]
+marketing = [
+  "pymc-marketing; python_version >= '3.12'"
 ]
 
 [project.scripts]
 quant-trafego = "quant_trafego.cli:main"
+quant-trafego-mcmc = "quant_trafego.deep_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
