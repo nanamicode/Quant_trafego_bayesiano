@@ -518,29 +518,83 @@ class BayesTrafficEngine:
         df: pd.DataFrame,
         *,
         posterior_overrides: dict | None = None,
+        decision_entities: dict[str, set[str] | frozenset[str]] | None = None,
     ):
         df = self.validate(df)
-        quality_report = assess_data_quality(df)
+
+        active_campaigns = (
+            {str(x) for x in decision_entities.get("campaign", set())}
+            if decision_entities
+            else None
+        )
+        active_adsets = (
+            {str(x) for x in decision_entities.get("adset", set())}
+            if decision_entities
+            else None
+        )
+        active_ads = (
+            {str(x) for x in decision_entities.get("ad", set())}
+            if decision_entities
+            else None
+        )
+
+        if decision_entities:
+            if active_ads:
+                account_df = df[
+                    df["ad_id"].astype(str).isin(active_ads)
+                ].copy()
+            elif active_adsets:
+                account_df = df[
+                    df["adset_id"].astype(str).isin(active_adsets)
+                ].copy()
+            elif active_campaigns:
+                account_df = df[
+                    df["campaign_id"].astype(str).isin(active_campaigns)
+                ].copy()
+            else:
+                account_df = df.iloc[0:0].copy()
+
+            if account_df.empty:
+                raise ValueError(
+                    "Nenhuma entidade ativa foi identificada para gerar decisões."
+                )
+        else:
+            account_df = df
+
+        quality_report = assess_data_quality(account_df)
         quality_factor = float(np.clip(quality_report.score / 100.0, 0.0, 1.0))
         rows = []
 
-        global_fallback = self._global_posteriors(df)
-        (global_ctr, global_cvr), global_source = self._get_override(
-            posterior_overrides,
-            "account",
-            "ALL",
-            global_fallback,
-        )
-        global_response = estimate_response(df)
+        # Full history, including currently inactive entities, remains the
+        # statistical context used for hierarchical shrinkage.
+        context_global_ctr, context_global_cvr = self._global_posteriors(df)
+        context_response = estimate_response(df)
+
+        if decision_entities:
+            account_ctr, account_cvr = self._global_posteriors(account_df)
+            account_source = "empirical_bayes_active_portfolio"
+            account_response = estimate_response(
+                account_df,
+                parent=context_response,
+            )
+        else:
+            (account_ctr, account_cvr), account_source = self._get_override(
+                posterior_overrides,
+                "account",
+                "ALL",
+                (context_global_ctr, context_global_cvr),
+            )
+            account_response = context_response
+
         rows.extend(
             self._evaluate_entity(
                 "account",
                 "ALL",
-                df,
-                global_ctr,
-                global_cvr,
-                global_response,
-                global_source,
+                account_df,
+                account_ctr,
+                account_cvr,
+                account_response,
+                account_source,
             )
         )
 
@@ -548,10 +602,15 @@ class BayesTrafficEngine:
         campaign_response = {}
         campaign_source = {}
         for campaign_id, cdf in df.groupby("campaign_id", sort=False):
+            if (
+                active_campaigns is not None
+                and str(campaign_id) not in active_campaigns
+            ):
+                continue
             fallback = self._posterior(
                 cdf,
-                global_ctr,
-                global_cvr,
+                context_global_ctr,
+                context_global_cvr,
                 self.config.campaign_ctr_strength,
                 self.config.campaign_cvr_strength,
             )
@@ -561,7 +620,7 @@ class BayesTrafficEngine:
                 campaign_id,
                 fallback,
             )
-            response = estimate_response(cdf, parent=global_response)
+            response = estimate_response(cdf, parent=context_response)
             campaign_posts[campaign_id] = posts
             campaign_response[campaign_id] = response
             campaign_source[campaign_id] = source
@@ -582,6 +641,13 @@ class BayesTrafficEngine:
             ["campaign_id", "adset_id"],
             sort=False,
         ):
+            if (
+                active_adsets is not None
+                and str(adset_id) not in active_adsets
+            ):
+                continue
+            if campaign_id not in campaign_posts:
+                continue
             fallback = self._posterior(
                 sdf,
                 *campaign_posts[campaign_id],
@@ -615,6 +681,13 @@ class BayesTrafficEngine:
             ["campaign_id", "adset_id", "ad_id"],
             sort=False,
         ):
+            if (
+                active_ads is not None
+                and str(ad_id) not in active_ads
+            ):
+                continue
+            if (campaign_id, adset_id) not in adset_posts:
+                continue
             fallback = self._posterior(
                 adf,
                 *adset_posts[(campaign_id, adset_id)],
