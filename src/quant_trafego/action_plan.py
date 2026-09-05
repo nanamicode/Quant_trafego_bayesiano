@@ -846,6 +846,13 @@ def build_operational_action_plan(
         )
         for _, row in campaign_rows.iterrows()
     }
+    adset_selected_horizon_spend = {
+        str(row["entity_id"]): max(
+            float(row.get("selected_expected_spend", 0.0)),
+            0.0,
+        )
+        for _, row in adset_rows.iterrows()
+    }
     adset_selected_by_campaign = (
         adset_rows.assign(
             campaign_id=adset_rows[
@@ -939,14 +946,19 @@ def build_operational_action_plan(
             campaign_id = str(
                 row.get("campaign_id", "")
             )
-            expected_spend = max(
-                float(
-                    row.get(
-                        "expected_spend",
-                        0.0,
-                    )
+            raw_expected_spend = pd.to_numeric(
+                pd.Series(
+                    [row.get("expected_spend", np.nan)]
                 ),
-                0.0,
+                errors="coerce",
+            ).iloc[0]
+            expected_spend = (
+                max(float(raw_expected_spend), 0.0)
+                if np.isfinite(raw_expected_spend)
+                else adset_selected_horizon_spend.get(
+                    str(row["entity_id"]),
+                    0.0,
+                )
             )
             parent_campaign_recommended_daily = (
                 campaign_daily_targets.get(
