@@ -1,0 +1,3 @@
+date,campaign_id,campaign_name,campaign_daily_budget,adset_id,adset_name,adset_daily_budget,ad_id,ad_name,status,impressions,reach,frequency,clicks,landing_page_views,adds_to_cart,checkouts,conversions,spend,revenue
+2026-09-01,camp_001,Prospeccao,1000,set_001,Publico A,500,ad_001,Criativo A,active,50000,32000,1.56,1200,980,150,80,42,480.00,4200.00
+2026-09-02,camp_001,Prospeccao,1000,set_001,Publico A,500,ad_001,Criativo A,active,52000,33000,1.58,1260,1010,158,85,44,500.00,4400.00
