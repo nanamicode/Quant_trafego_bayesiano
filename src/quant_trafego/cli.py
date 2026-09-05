@@ -7,6 +7,8 @@ from .hardware import detect_hardware
 from .io import filter_active, load_ads_file
 from .quality import assess_data_quality
 from .report import write_reports
+from .reproducibility import build_run_manifest, write_run_manifest
+from .storage import LocalWarehouse
 
 
 def main():
@@ -15,6 +17,7 @@ def main():
     )
     parser.add_argument("--input", required=True, help="Arquivo .csv ou .xlsx")
     parser.add_argument("--output", default="output", help="Pasta de saída")
+    parser.add_argument("--workspace", default="workspace", help="Warehouse local auditável")
     parser.add_argument("--target-roas", type=float, default=2.0)
     parser.add_argument(
         "--contribution-margin",
@@ -49,8 +52,7 @@ def main():
     for warning in quality.warnings:
         print(f"AVISO: {warning}")
 
-    engine = BayesTrafficEngine(
-        EngineConfig(
+    config = EngineConfig(
             target_roas=args.target_roas,
             contribution_margin=args.contribution_margin,
             horizon_days=args.horizon_days,
@@ -58,9 +60,24 @@ def main():
             risk_aversion=args.risk_aversion,
             seed=args.seed,
         )
-    )
+    engine = BayesTrafficEngine(config)
     all_actions, best = engine.run(df)
     write_reports(all_actions, best, args.output)
+
+    manifest = build_run_manifest(
+        df,
+        config=config,
+        inference_mode="empirical_bayes",
+        seed=args.seed,
+        extra={
+            "quality_score": quality.score,
+            "quality_warnings": list(quality.warnings),
+        },
+    )
+    write_run_manifest(manifest, args.output)
+    workspace = LocalWarehouse(args.workspace)
+    run_dir = workspace.persist_run(df, manifest, all_actions, best)
+    print(f"Run auditável: {run_dir}")
 
     cols = [
         "level",
