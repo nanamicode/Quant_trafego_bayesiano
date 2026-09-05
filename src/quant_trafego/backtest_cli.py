@@ -27,6 +27,11 @@ def main():
         default="derivative",
     )
     parser.add_argument("--draws", type=int, default=0)
+    parser.add_argument(
+        "--disable-weekly-seasonality",
+        action="store_true",
+        help="Desativa o ajuste semanal encolhido de CTR/CVR.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--include-inactive", action="store_true")
     args = parser.parse_args()
@@ -44,6 +49,7 @@ def main():
         draws=draws,
         seed=args.seed,
             temporal_model=args.temporal_model,
+            use_weekly_seasonality=not args.disable_weekly_seasonality,
     )
 
     detail, summary = rolling_origin_backtest(
