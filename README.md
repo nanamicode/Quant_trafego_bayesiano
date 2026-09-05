@@ -1,20 +1,18 @@
 # Quant Tráfego Bayesiano
 
-Analisador quantitativo Bayesiano local para tráfego pago.
+Motor quantitativo Bayesiano local para tráfego pago.
 
-O projeto recebe uma planilha completa e analisa a hierarquia:
+A hierarquia analisada é:
 
 `conta → campanha → conjunto → anúncio`
 
-A visão global da conta é usada como informação estatística para níveis com menos amostra. Conforme uma campanha, conjunto ou anúncio acumula evidência, seus próprios dados passam a dominar o posterior.
+O sistema usa a visão global para estabilizar entidades com pouca amostra e aumenta a independência estatística de cada nível conforme a evidência própria cresce.
 
-## Forma oficial de rodar
+## Execução local
 
-O projeto não depende de servidor pago.
+Não há servidor obrigatório nem custo de infraestrutura.
 
-Há dois modos:
-
-### 1. Interface local no navegador — recomendado para uso diário
+### Interface local
 
 No Windows:
 
@@ -22,76 +20,81 @@ No Windows:
 run_app_windows.bat
 ```
 
-O script cria/usa um ambiente Python local, instala as dependências e abre a interface Streamlit em `localhost`.
+A interface abre em `localhost`. O arquivo é processado no próprio computador.
 
-A planilha é processada no próprio computador.
+### Modo profundo
 
-Na interface você escolhe:
+Instale uma vez:
 
-- arquivo CSV/XLSX;
-- profundidade da análise;
-- horizonte futuro;
-- ROAS alvo;
+```bat
+install_deep_windows.bat
+```
+
+Depois o modo **MCMC hierárquico profundo** passa a ficar disponível na mesma interface.
+
+Também é possível rodar pelo terminal:
+
+```bat
+quant-trafego-mcmc --input "C:\dados\meta.xlsx" --output output_mcmc --contribution-margin 0.40 --target-roas 2.0
+```
+
+## Dois motores de inferência
+
+### Hierárquico rápido
+
+Usa Empirical Bayes/partial pooling. É indicado para exploração, testes e análises frequentes.
+
+### MCMC hierárquico profundo
+
+Usa PyMC com efeitos aleatórios não centrados em:
+
+- conta;
+- campanha;
+- conjunto;
+- anúncio.
+
+CTR e CVR recebem posteriores próprios em todos os níveis. Esses posteriores alimentam diretamente a árvore econômica de Monte Carlo.
+
+Em `auto`:
+
+- até 300 anúncios: NUTS;
+- acima disso: ADVI, para limitar custo computacional.
+
+No NUTS são registrados:
+
+- R-hat máximo;
+- ESS bulk mínimo;
+- divergências;
+- status de convergência.
+
+## Componentes quantitativos já implementados
+
+- posterior hierárquico de CTR e CVR;
+- partial pooling conta → campanha → conjunto → anúncio;
+- derivada temporal de CTR e CVR no espaço logit;
+- comparação probabilística recente × histórico;
+- score de mudança de regime;
+- score de instabilidade;
+- elasticidade observacional gasto → conversões;
+- shrinkage hierárquico da elasticidade;
+- fallback de saturação por curva de Hill;
+- Monte Carlo econômico por ação;
 - margem de contribuição;
-- aversão a risco;
-- incluir ou não entidades inativas.
+- probabilidade de lucro;
+- probabilidade de ruína;
+- probabilidade de bater ROAS alvo;
+- probabilidade de superar manter;
+- probabilidade de cada ação ser a ótima;
+- lucro incremental esperado contra manter;
+- VaR 10%;
+- CVaR 10%;
+- expected regret;
+- utilidade ajustada a risco;
+- score de confiança da decisão;
+- dimensionamento automático conforme CPU/RAM;
+- diagnóstico estrutural da planilha.
 
-### 2. Terminal / CLI — recomendado para lotes e análises pesadas
-
-```bat
-run_windows.bat
-```
-
-Depois:
-
-```bat
-quant-trafego --input "C:\caminho\planilha.xlsx" --output output --draws 30000 --target-roas 2.0 --contribution-margin 0.40
-```
-
-Uma execução mais pesada:
-
-```bat
-quant-trafego --input "C:\caminho\planilha.xlsx" --output output_profundo --draws 100000 --target-roas 2.0 --contribution-margin 0.40
-```
-
-## Objetivo econômico
-
-O motor não assume que receita é lucro.
-
-Quando a margem de contribuição é informada:
-
-```text
-lucro econômico simulado = receita × margem de contribuição − gasto de mídia
-```
-
-Exemplo:
-
-```text
-receita prevista = R$ 10.000
-margem antes da mídia = 40%
-mídia = R$ 2.500
-
-lucro = 10.000 × 0,40 − 2.500 = R$ 1.500
-```
-
-Se a margem não for informada, o padrão atual é 100% apenas por compatibilidade.
-
-## Como ele analisa
-
-1. Lê um CSV ou XLSX completo.
-2. Normaliza nomes de colunas comuns.
-3. Filtra entidades ativas quando houver coluna de status.
-4. Analisa primeiro a conta inteira.
-5. Forma os posteriores globais.
-6. Desce campanha por campanha.
-7. Dentro de cada campanha, conjunto por conjunto.
-8. Dentro de cada conjunto, anúncio por anúncio.
-9. Usa partial pooling para controlar amostras pequenas.
-10. Simula milhares de futuros para diferentes ações.
-11. Compara risco, retorno e regret.
-12. Gera ranking de oportunidades e riscos.
-
-## Ações atualmente simuladas
+## Ações simuladas atualmente
 
 ```text
 0.0x   pausar
@@ -103,40 +106,17 @@ Se a margem não for informada, o padrão atual é 100% apenas por compatibilida
 2.0x   dobrar
 ```
 
-## Métricas de decisão
+## Lucro econômico
 
-Para cada entidade e ação:
+O motor usa:
 
-- receita esperada;
-- lucro esperado;
-- ROAS esperado;
-- P(lucro > 0);
-- P(ROAS > meta);
-- P(ação superar manter);
-- VaR 10%;
-- CVaR 10%;
-- expected regret;
-- utilidade ajustada ao risco.
+```text
+lucro = receita × margem de contribuição − mídia
+```
 
-## Saídas
+e não confunde receita com lucro.
 
-CLI:
-
-- `all_actions.csv`
-- `best_actions.csv`
-- `summary.md`
-
-Interface local:
-
-- tabelas navegáveis;
-- visão global;
-- melhores ações;
-- todas as ações simuladas;
-- download dos CSVs.
-
-## Formato mínimo esperado
-
-O motor tenta reconhecer aliases comuns, mas internamente precisa de:
+## Entrada mínima
 
 ```text
 date
@@ -150,33 +130,27 @@ spend
 revenue
 ```
 
-Um exemplo está em `examples/example_data.csv`.
+CSV e XLSX são aceitos. Há aliases comuns de exportação em `src/quant_trafego/io.py`.
 
-## Arquitetura estatística atual
+## Saídas
 
-A versão atual usa Empirical Bayes hierárquico:
+- `all_actions.csv`;
+- `best_actions.csv`;
+- `summary.md`;
+- no modo profundo: `hierarchical_funnel.nc`, `mcmc_diagnostics.csv` e `mcmc_entity_mapping.csv`.
 
-```text
-conta
-└── campanha
-    └── conjunto
-        └── anúncio
-```
+## Próximas camadas
 
-CTR e CVR usam distribuições Beta posteriores. CPM e ticket são tratados como distribuições positivas na etapa de simulação. Uma curva de Hill aproxima diminishing returns ao variar orçamento.
+As próximas evoluções planejadas são:
 
-## Direção da versão profunda
-
-A evolução planejada é transformar o núcleo atual em uma inferência Bayesiana completa:
-
-- PyMC / NumPyro para MCMC hierárquico;
-- ArviZ para R-hat, ESS e posterior predictive checks;
-- efeitos temporais e mudança de regime;
-- PyMC-Marketing para adstock, saturação e resposta marginal;
-- Google Meridian como referência complementar para MMM agregado;
-- MABWiser para Thompson Sampling;
-- Ax + BoTorch para otimização Bayesiana de orçamento sob restrições.
+- posterior predictive checks mais extensos;
+- modelo temporal dinâmico em estado-espaço;
+- adstock e saturação aprendidos com PyMC-Marketing;
+- otimização global de orçamento via Ax/BoTorch;
+- Thompson Sampling/contextual bandits;
+- calibração experimental e incrementalidade;
+- comparação de modelos e backtesting temporal.
 
 Veja `ARCHITECTURE.md`.
 
-> As probabilidades são condicionais aos dados e às hipóteses do modelo. O sistema não representa garantia de lucro.
+> As probabilidades são condicionais aos dados observados e às hipóteses do modelo; não constituem garantia de resultado financeiro.
