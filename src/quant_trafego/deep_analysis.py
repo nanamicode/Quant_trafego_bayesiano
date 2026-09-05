@@ -57,7 +57,7 @@ def deep_decision_policy(
     if diagnostics.method == "advi":
         return (
             "mcmc_advi_approximate",
-            "none",
+            "advi_approximation_scale_cap",
         )
 
     return (
@@ -133,21 +133,28 @@ def run_deep_analysis(
             clean
         )
     elif guardrail != "none":
-        # Posterior remains informative, but a failed/insufficient PPC is not
-        # allowed to justify increasing capital exposure.
+        if guardrail == "posterior_predictive_check_not_passed":
+            max_scale = 1.0
+        elif guardrail == "advi_approximation_scale_cap":
+            max_scale = 1.20
+        else:
+            max_scale = 1.0
+
+        # Approximate or misspecified deep posteriors may still inform
+        # direction, but they cannot increase exposure beyond the guardrail.
         guarded_config = replace(
             base_config,
             predictive_max_multiplier=min(
                 base_config.predictive_max_multiplier,
-                1.0,
+                max_scale,
             ),
             observational_max_multiplier=min(
                 base_config.observational_max_multiplier,
-                1.0,
+                max_scale,
             ),
             experiment_max_multiplier=min(
                 base_config.experiment_max_multiplier,
-                1.0,
+                max_scale,
             ),
         )
         final_engine = BayesTrafficEngine(
