@@ -124,12 +124,14 @@ def simulate_action(
     draws: int,
     horizon_days: int,
     target_roas: float,
+    contribution_margin: float,
     rng: np.random.Generator,
     saturation_half: float = 1.5,
     saturation_slope: float = 1.3,
 ) -> dict:
     base_daily_spend = stats["spend"] / max(stats["days"], 1)
     spend = float(base_daily_spend * horizon_days * multiplier)
+    contribution_margin = float(np.clip(contribution_margin, 0.0, 1.0))
 
     if spend <= 0:
         revenue = np.zeros(draws)
@@ -156,7 +158,7 @@ def simulate_action(
         clicks = rng.binomial(impressions, ctr)
         conversions = rng.binomial(clicks, cvr_scaled)
         revenue = conversions * aov
-        profit = revenue - spend
+        profit = revenue * contribution_margin - spend
         roas = revenue / spend
 
     q10 = float(np.quantile(profit, 0.10))
