@@ -336,6 +336,7 @@ def main():
                 extra_tables["temporal_model_comparison"] = model_comparison
             if model_decision is not None:
                 extra_json["temporal_model_decision"] = model_decision
+            extra_json["account_budget_target"] = account_budget_target
             if allocation_summary is not None:
                 extra_json["allocation_summary"] = allocation_summary
             if adset_allocation_summary is not None:
@@ -459,6 +460,19 @@ def main():
             ]
         )
         with tab_plan:
+            b1, b2, b3 = st.columns(3)
+            b1.metric(
+                "Capital total atual/dia",
+                _fmt_money(account_budget_target["current_daily_amount"]),
+            )
+            b2.metric(
+                "Capital total recomendado/dia",
+                _fmt_money(account_budget_target["recommended_daily_amount"]),
+            )
+            b3.metric(
+                "Mudança total/dia",
+                _fmt_money(account_budget_target["daily_amount_change"]),
+            )
             if operational_plan.empty:
                 st.info("Nenhuma ação operacional disponível.")
             else:
