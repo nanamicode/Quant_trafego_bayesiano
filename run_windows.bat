@@ -12,7 +12,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-uv sync --python 3.12
+uv sync --python 3.12 --locked
 if errorlevel 1 exit /b 1
 
 echo.
