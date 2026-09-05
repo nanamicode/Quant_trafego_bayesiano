@@ -9,6 +9,7 @@ from .dynamic import analyze_state_space_temporal
 from .model import (
     BetaPosterior,
     aggregate,
+    beta_from_mean,
     sample_simulation_context,
     shrink_to,
     simulate_action,
@@ -46,6 +47,8 @@ class EngineConfig:
     saturation_slope: float = 1.3
     temporal_half_life_days: float = 14.0
     temporal_recent_days: int = 7
+    action_baseline_recent_days: int = 7
+    temporal_projection_days: float = 2.0
     use_temporal: bool = True
     temporal_model: str = "derivative"
     use_empirical_response: bool = True
@@ -58,6 +61,7 @@ class EngineConfig:
     min_p_profit_for_scale: float = 0.60
     min_p_incremental_for_scale: float = 0.55
     min_quality_for_scale: float = 0.55
+    require_recent_contribution_profit_for_scale: bool = True
     cautious_quality_threshold: float = 0.75
     cautious_quality_max_multiplier: float = 1.20
     quality_confidence_weight: float = 0.35
