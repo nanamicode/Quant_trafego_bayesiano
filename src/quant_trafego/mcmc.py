@@ -16,6 +16,8 @@ class MCMCDiagnostics:
     n_campaigns: int
     n_adsets: int
     n_ads: int
+    n_days: int
+    n_observations: int
     max_rhat: float | None
     min_ess_bulk: float | None
     divergences: int | None
@@ -29,7 +31,10 @@ def _safe_logit(p: float) -> float:
 
 def _prepare(df: pd.DataFrame):
     data = (
-        df.groupby(["campaign_id", "adset_id", "ad_id"], as_index=False)
+        df.groupby(
+            ["date", "campaign_id", "adset_id", "ad_id"],
+            as_index=False,
+        )
         .agg(
             impressions=("impressions", "sum"),
             clicks=("clicks", "sum"),
@@ -37,16 +42,28 @@ def _prepare(df: pd.DataFrame):
         )
         .copy()
     )
+    data["date"] = pd.to_datetime(data["date"])
+    data = data.sort_values(
+        ["date", "campaign_id", "adset_id", "ad_id"]
+    ).reset_index(drop=True)
 
-    campaign_codes, campaign_uniques = pd.factorize(data["campaign_id"], sort=True)
-    adset_key = data["campaign_id"].astype(str) + "::" + data["adset_id"].astype(str)
+    campaign_codes, campaign_uniques = pd.factorize(
+        data["campaign_id"], sort=True
+    )
+    adset_key = (
+        data["campaign_id"].astype(str)
+        + "::"
+        + data["adset_id"].astype(str)
+    )
     adset_codes, adset_uniques = pd.factorize(adset_key, sort=True)
     ad_key = adset_key + "::" + data["ad_id"].astype(str)
     ad_codes, ad_uniques = pd.factorize(ad_key, sort=True)
+    date_codes, date_uniques = pd.factorize(data["date"], sort=True)
 
     data["campaign_idx"] = campaign_codes
     data["adset_idx"] = adset_codes
     data["ad_idx"] = ad_codes
+    data["date_idx"] = date_codes
 
     campaign_map = (
         data[["campaign_idx", "campaign_id"]]
@@ -72,10 +89,20 @@ def _prepare(df: pd.DataFrame):
         "campaign": campaign_map["campaign_id"].astype(str).tolist(),
         "adset": adset_map["adset_id"].astype(str).tolist(),
         "ad": ad_map["ad_id"].astype(str).tolist(),
+        "date": [str(pd.Timestamp(x)) for x in date_uniques],
         "adset_campaign_idx": adset_map["campaign_idx"].to_numpy(dtype=int),
         "ad_adset_idx": ad_map["adset_idx"].to_numpy(dtype=int),
+        "observation_date": data["date"].astype(str).tolist(),
+        "observation_ad": data["ad_id"].astype(str).tolist(),
     }
-    return data, campaign_uniques, adset_uniques, ad_uniques, mapping
+    return (
+        data,
+        campaign_uniques,
+        adset_uniques,
+        ad_uniques,
+        date_uniques,
+        mapping,
+    )
 
 
 def fit_hierarchical_funnel(
@@ -89,30 +116,43 @@ def fit_hierarchical_funnel(
     seed: int = 42,
     method: str = "auto",
     advi_steps: int = 40_000,
+    include_global_time_effect: bool = True,
     return_mapping: bool = False,
 ):
     """
-    Full hierarchical Bayesian funnel for CTR and CVR.
+    Hierarchical Bayesian daily funnel for CTR and CVR.
 
-    Non-centered random effects are estimated at account, campaign, ad-set and
-    ad level. The model emits posterior rates for every hierarchy level so the
-    decision engine can consume MCMC uncertainty directly.
+    Observations remain daily. Campaign, ad-set and ad effects are non-centered.
+    An optional global local-level time process captures account-wide temporal
+    movement without pretending each low-volume ad has an independently
+    identifiable daily latent state.
 
-    method='auto' uses NUTS for up to 300 ads and ADVI above that threshold.
+    method='auto' uses NUTS for moderate structures and ADVI otherwise.
     """
     try:
         import pymc as pm
         import arviz as az
-    except ImportError as exc:  # pragma: no cover - optional dependency
+        import pytensor.tensor as pt
+    except ImportError as exc:  # pragma: no cover
         raise RuntimeError(
-            "Modo MCMC requer dependências profundas. Instale com: pip install -e .[deep]"
+            "Modo MCMC requer dependências profundas. "
+            "Instale com: uv sync --extra deep"
         ) from exc
 
-    data, campaigns, adsets, ads, mapping = _prepare(df)
+    (
+        data,
+        campaigns,
+        adsets,
+        ads,
+        dates,
+        mapping,
+    ) = _prepare(df)
 
     n_campaigns = len(campaigns)
     n_adsets = len(adsets)
     n_ads = len(ads)
+    n_days = len(dates)
+    n_observations = len(data)
 
     impressions = data["impressions"].to_numpy(dtype=int)
     clicks = data["clicks"].to_numpy(dtype=int)
@@ -120,6 +160,7 @@ def fit_hierarchical_funnel(
     campaign_idx = data["campaign_idx"].to_numpy(dtype=int)
     adset_idx = data["adset_idx"].to_numpy(dtype=int)
     ad_idx = data["ad_idx"].to_numpy(dtype=int)
+    date_idx = data["date_idx"].to_numpy(dtype=int)
 
     adset_campaign_idx = mapping["adset_campaign_idx"]
     ad_adset_idx = mapping["ad_adset_idx"]
@@ -131,13 +172,23 @@ def fit_hierarchical_funnel(
         "campaign": campaigns.astype(str).tolist(),
         "adset": adsets.astype(str).tolist(),
         "ad": ads.astype(str).tolist(),
-        "entity": np.arange(len(data)),
+        "date": [str(pd.Timestamp(x)) for x in dates],
+        "entity": np.arange(n_observations),
     }
 
     with pm.Model(coords=coords) as model:
-        campaign_i = pm.Data("campaign_i", campaign_idx, dims="entity")
-        adset_i = pm.Data("adset_i", adset_idx, dims="entity")
-        ad_i = pm.Data("ad_i", ad_idx, dims="entity")
+        campaign_i = pm.Data(
+            "campaign_i", campaign_idx, dims="entity"
+        )
+        adset_i = pm.Data(
+            "adset_i", adset_idx, dims="entity"
+        )
+        ad_i = pm.Data(
+            "ad_i", ad_idx, dims="entity"
+        )
+        date_i = pm.Data(
+            "date_i", date_idx, dims="entity"
+        )
         adset_campaign_i = pm.Data(
             "adset_campaign_i",
             adset_campaign_idx,
@@ -150,15 +201,30 @@ def fit_hierarchical_funnel(
         )
 
         def funnel(prefix: str, base_rate: float):
-            mu = pm.Normal(f"{prefix}_mu", mu=_safe_logit(base_rate), sigma=1.0)
+            mu = pm.Normal(
+                f"{prefix}_mu",
+                mu=_safe_logit(base_rate),
+                sigma=1.0,
+            )
+            sigma_campaign = pm.HalfNormal(
+                f"{prefix}_sigma_campaign", sigma=0.7
+            )
+            sigma_adset = pm.HalfNormal(
+                f"{prefix}_sigma_adset", sigma=0.6
+            )
+            sigma_ad = pm.HalfNormal(
+                f"{prefix}_sigma_ad", sigma=0.6
+            )
 
-            sigma_campaign = pm.HalfNormal(f"{prefix}_sigma_campaign", sigma=0.7)
-            sigma_adset = pm.HalfNormal(f"{prefix}_sigma_adset", sigma=0.6)
-            sigma_ad = pm.HalfNormal(f"{prefix}_sigma_ad", sigma=0.6)
-
-            z_campaign = pm.Normal(f"{prefix}_z_campaign", 0, 1, dims="campaign")
-            z_adset = pm.Normal(f"{prefix}_z_adset", 0, 1, dims="adset")
-            z_ad = pm.Normal(f"{prefix}_z_ad", 0, 1, dims="ad")
+            z_campaign = pm.Normal(
+                f"{prefix}_z_campaign", 0, 1, dims="campaign"
+            )
+            z_adset = pm.Normal(
+                f"{prefix}_z_adset", 0, 1, dims="adset"
+            )
+            z_ad = pm.Normal(
+                f"{prefix}_z_ad", 0, 1, dims="ad"
+            )
 
             eta_campaign = mu + sigma_campaign * z_campaign
             eta_adset = (
@@ -169,7 +235,30 @@ def fit_hierarchical_funnel(
                 eta_adset[ad_adset_i]
                 + sigma_ad * z_ad
             )
-            eta_entity = eta_ad[ad_i]
+
+            if include_global_time_effect and n_days >= 4:
+                sigma_time = pm.HalfNormal(
+                    f"{prefix}_sigma_time",
+                    sigma=0.12,
+                )
+                z_time = pm.Normal(
+                    f"{prefix}_z_time",
+                    0,
+                    1,
+                    dims="date",
+                )
+                raw_time = sigma_time * pt.cumsum(z_time)
+                centered_time = raw_time - pt.mean(raw_time)
+                time_effect = pm.Deterministic(
+                    f"{prefix}_time_effect",
+                    centered_time,
+                    dims="date",
+                )
+            else:
+                time_effect = pt.zeros(n_days)
+
+            eta_entity = eta_ad[ad_i] + time_effect[date_i]
+            current_time = time_effect[-1]
 
             pm.Deterministic(
                 f"{prefix}_p_account",
@@ -189,6 +278,31 @@ def fit_hierarchical_funnel(
                 f"{prefix}_p_ad",
                 pm.math.sigmoid(eta_ad),
                 dims="ad",
+            )
+
+            pm.Deterministic(
+                f"{prefix}_p_account_current",
+                pm.math.sigmoid(mu + current_time),
+            )
+            pm.Deterministic(
+                f"{prefix}_p_campaign_current",
+                pm.math.sigmoid(eta_campaign + current_time),
+                dims="campaign",
+            )
+            pm.Deterministic(
+                f"{prefix}_p_adset_current",
+                pm.math.sigmoid(eta_adset + current_time),
+                dims="adset",
+            )
+            pm.Deterministic(
+                f"{prefix}_p_ad_current",
+                pm.math.sigmoid(eta_ad + current_time),
+                dims="ad",
+            )
+            pm.Deterministic(
+                f"{prefix}_p_entity",
+                pm.math.sigmoid(eta_entity),
+                dims="entity",
             )
             return pm.math.sigmoid(eta_entity)
 
@@ -212,10 +326,18 @@ def fit_hierarchical_funnel(
 
         selected = method
         if method == "auto":
-            selected = "nuts" if n_ads <= 300 else "advi"
+            moderate = (
+                n_ads <= 250
+                and n_days <= 180
+                and n_observations <= 20_000
+            )
+            selected = "nuts" if moderate else "advi"
 
         if selected == "nuts":
-            use_cores = cores or max(1, min(chains, (os.cpu_count() or 2) - 1))
+            use_cores = cores or max(
+                1,
+                min(chains, (os.cpu_count() or 2) - 1),
+            )
             idata = pm.sample(
                 draws=draws,
                 tune=tune,
@@ -231,9 +353,14 @@ def fit_hierarchical_funnel(
                 method="advi",
                 random_seed=seed,
             )
-            idata = approx.sample(draws=draws, return_inferencedata=True)
+            idata = approx.sample(
+                draws=draws,
+                return_inferencedata=True,
+            )
         else:
-            raise ValueError("method deve ser 'auto', 'nuts' ou 'advi'.")
+            raise ValueError(
+                "method deve ser 'auto', 'nuts' ou 'advi'."
+            )
 
     max_rhat = None
     min_ess = None
@@ -241,26 +368,39 @@ def fit_hierarchical_funnel(
     converged = None
 
     if selected == "nuts":
+        var_names = [
+            "ctr_mu",
+            "cvr_mu",
+            "ctr_sigma_campaign",
+            "ctr_sigma_adset",
+            "ctr_sigma_ad",
+            "cvr_sigma_campaign",
+            "cvr_sigma_adset",
+            "cvr_sigma_ad",
+        ]
+        if include_global_time_effect and n_days >= 4:
+            var_names += ["ctr_sigma_time", "cvr_sigma_time"]
+
         summary = az.summary(
             idata,
-            var_names=[
-                "ctr_mu",
-                "cvr_mu",
-                "ctr_sigma_campaign",
-                "ctr_sigma_adset",
-                "ctr_sigma_ad",
-                "cvr_sigma_campaign",
-                "cvr_sigma_adset",
-                "cvr_sigma_ad",
-            ],
+            var_names=var_names,
             kind="diagnostics",
         )
         if "r_hat" in summary:
-            max_rhat = float(np.nanmax(summary["r_hat"].to_numpy()))
+            max_rhat = float(
+                np.nanmax(summary["r_hat"].to_numpy())
+            )
         if "ess_bulk" in summary:
-            min_ess = float(np.nanmin(summary["ess_bulk"].to_numpy()))
-        if hasattr(idata, "sample_stats") and "diverging" in idata.sample_stats:
-            divergences = int(idata.sample_stats["diverging"].sum().item())
+            min_ess = float(
+                np.nanmin(summary["ess_bulk"].to_numpy())
+            )
+        if (
+            hasattr(idata, "sample_stats")
+            and "diverging" in idata.sample_stats
+        ):
+            divergences = int(
+                idata.sample_stats["diverging"].sum().item()
+            )
         converged = bool(
             (max_rhat is None or max_rhat <= 1.01)
             and (min_ess is None or min_ess >= 400)
@@ -272,6 +412,8 @@ def fit_hierarchical_funnel(
         n_campaigns=n_campaigns,
         n_adsets=n_adsets,
         n_ads=n_ads,
+        n_days=n_days,
+        n_observations=n_observations,
         max_rhat=max_rhat,
         min_ess_bulk=min_ess,
         divergences=divergences,
@@ -289,14 +431,24 @@ def _moment_match_beta(samples: np.ndarray) -> BetaPosterior:
         return BetaPosterior(1.0, 1.0)
 
     mean = float(np.clip(x.mean(), 1e-8, 1 - 1e-8))
-    var = float(max(x.var(ddof=1) if len(x) > 1 else 0.0, 1e-12))
+    var = float(
+        max(
+            x.var(ddof=1) if len(x) > 1 else 0.0,
+            1e-12,
+        )
+    )
     max_var = mean * (1 - mean)
     if var >= max_var:
         strength = 2.0
     else:
-        strength = max(mean * (1 - mean) / var - 1.0, 2.0)
+        strength = max(
+            mean * (1 - mean) / var - 1.0,
+            2.0,
+        )
 
-    strength = float(np.clip(strength, 2.0, 10_000_000.0))
+    strength = float(
+        np.clip(strength, 2.0, 10_000_000.0)
+    )
     return BetaPosterior(
         alpha=max(mean * strength, 1e-6),
         beta=max((1 - mean) * strength, 1e-6),
@@ -305,21 +457,37 @@ def _moment_match_beta(samples: np.ndarray) -> BetaPosterior:
 
 def posterior_rate_overrides(idata, mapping) -> dict:
     """
-    Convert MCMC posterior rate samples into Beta moment-matched distributions
-    that can be consumed by the Monte Carlo decision engine.
+    Convert current-state MCMC posterior rate samples into Beta
+    moment-matched distributions consumed by the decision engine.
     """
-    overrides: dict[tuple[str, str], tuple[BetaPosterior, BetaPosterior]] = {}
+    overrides: dict[
+        tuple[str, str],
+        tuple[BetaPosterior, BetaPosterior],
+    ] = {}
 
-    account_ctr = idata.posterior["ctr_p_account"].values
-    account_cvr = idata.posterior["cvr_p_account"].values
+    def variable(prefix: str, level: str):
+        current = f"{prefix}_p_{level}_current"
+        fallback = f"{prefix}_p_{level}"
+        return (
+            idata.posterior[current]
+            if current in idata.posterior
+            else idata.posterior[fallback]
+        )
+
+    account_ctr = variable("ctr", "account").values
+    account_cvr = variable("cvr", "account").values
     overrides[("account", "ALL")] = (
         _moment_match_beta(account_ctr),
         _moment_match_beta(account_cvr),
     )
 
-    for level, dim in [("campaign", "campaign"), ("adset", "adset"), ("ad", "ad")]:
-        ctr = idata.posterior[f"ctr_p_{level}"]
-        cvr = idata.posterior[f"cvr_p_{level}"]
+    for level, dim in [
+        ("campaign", "campaign"),
+        ("adset", "adset"),
+        ("ad", "ad"),
+    ]:
+        ctr = variable("ctr", level)
+        cvr = variable("cvr", level)
         ids = mapping[level]
 
         for i, entity_id in enumerate(ids):
@@ -348,7 +516,20 @@ def save_mcmc_result(
     )
     if mapping is not None:
         rows = []
-        for level in ["account", "campaign", "adset", "ad"]:
+        for level in [
+            "account",
+            "campaign",
+            "adset",
+            "ad",
+        ]:
             for entity_id in mapping[level]:
-                rows.append({"level": level, "entity_id": str(entity_id)})
-        pd.DataFrame(rows).to_csv(out / "mcmc_entity_mapping.csv", index=False)
+                rows.append(
+                    {
+                        "level": level,
+                        "entity_id": str(entity_id),
+                    }
+                )
+        pd.DataFrame(rows).to_csv(
+            out / "mcmc_entity_mapping.csv",
+            index=False,
+        )
