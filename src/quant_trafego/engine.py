@@ -535,8 +535,37 @@ class BayesTrafficEngine:
         *,
         posterior_overrides: dict | None = None,
         decision_entities: dict[str, set[str] | frozenset[str]] | None = None,
+        evaluation_levels: set[str] | tuple[str, ...] | None = None,
+        progress_callback=None,
     ):
         df = self.validate(df)
+        requested_levels = (
+            {"account", "campaign", "adset", "ad"}
+            if evaluation_levels is None
+            else {str(level) for level in evaluation_levels}
+        )
+        invalid_levels = requested_levels - {
+            "account",
+            "campaign",
+            "adset",
+            "ad",
+        }
+        if invalid_levels:
+            raise ValueError(
+                "Níveis de avaliação inválidos: "
+                + ", ".join(sorted(invalid_levels))
+            )
+        # Parent levels are required internally to build hierarchical priors.
+        if "ad" in requested_levels:
+            requested_levels.update(
+                {"account", "campaign", "adset"}
+            )
+        elif "adset" in requested_levels:
+            requested_levels.update(
+                {"account", "campaign"}
+            )
+        elif "campaign" in requested_levels:
+            requested_levels.add("account")
 
         active_campaigns = (
             {str(x) for x in decision_entities.get("campaign", set())}
@@ -553,6 +582,47 @@ class BayesTrafficEngine:
             if decision_entities
             else None
         )
+
+        progress_total = 0
+        if "account" in requested_levels:
+            progress_total += 1
+        if "campaign" in requested_levels:
+            progress_total += (
+                len(active_campaigns)
+                if active_campaigns is not None
+                else int(df["campaign_id"].nunique())
+            )
+        if "adset" in requested_levels:
+            progress_total += (
+                len(active_adsets)
+                if active_adsets is not None
+                else int(df["adset_id"].nunique())
+            )
+        if "ad" in requested_levels:
+            progress_total += (
+                len(active_ads)
+                if active_ads is not None
+                else int(df["ad_id"].nunique())
+            )
+        progress_done = 0
+
+        def emit_progress(level: str, entity_id: str):
+            nonlocal progress_done
+            progress_done += 1
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "phase": "engine",
+                        "level": level,
+                        "entity_id": str(entity_id),
+                        "completed": progress_done,
+                        "total": max(progress_total, 1),
+                        "progress": min(
+                            progress_done / max(progress_total, 1),
+                            1.0,
+                        ),
+                    }
+                )
 
         if decision_entities:
             if active_ads:
@@ -602,17 +672,19 @@ class BayesTrafficEngine:
             )
             account_response = context_response
 
-        rows.extend(
-            self._evaluate_entity(
-                "account",
-                "ALL",
-                account_df,
-                account_ctr,
-                account_cvr,
-                account_response,
-                account_source,
+        if "account" in requested_levels:
+            rows.extend(
+                self._evaluate_entity(
+                    "account",
+                    "ALL",
+                    account_df,
+                    account_ctr,
+                    account_cvr,
+                    account_response,
+                    account_source,
+                )
             )
-        )
+            emit_progress("account", "ALL")
 
         campaign_posts = {}
         campaign_response = {}
@@ -640,23 +712,33 @@ class BayesTrafficEngine:
             campaign_posts[campaign_id] = posts
             campaign_response[campaign_id] = response
             campaign_source[campaign_id] = source
-            rows.extend(
-                self._evaluate_entity(
-                    "campaign",
-                    campaign_id,
-                    cdf,
-                    *posts,
-                    response,
-                    source,
+            if "campaign" in requested_levels:
+                rows.extend(
+                    self._evaluate_entity(
+                        "campaign",
+                        campaign_id,
+                        cdf,
+                        *posts,
+                        response,
+                        source,
+                    )
                 )
-            )
+                emit_progress("campaign", campaign_id)
 
         adset_posts = {}
         adset_response = {}
-        for (campaign_id, adset_id), sdf in df.groupby(
-            ["campaign_id", "adset_id"],
-            sort=False,
-        ):
+        adset_groups = (
+            df.groupby(
+                ["campaign_id", "adset_id"],
+                sort=False,
+            )
+            if (
+                "adset" in requested_levels
+                or "ad" in requested_levels
+            )
+            else []
+        )
+        for (campaign_id, adset_id), sdf in adset_groups:
             if (
                 active_adsets is not None
                 and str(adset_id) not in active_adsets
@@ -682,21 +764,28 @@ class BayesTrafficEngine:
             )
             adset_posts[(campaign_id, adset_id)] = posts
             adset_response[(campaign_id, adset_id)] = response
-            rows.extend(
-                self._evaluate_entity(
-                    "adset",
-                    adset_id,
-                    sdf,
-                    *posts,
-                    response,
-                    source,
+            if "adset" in requested_levels:
+                rows.extend(
+                    self._evaluate_entity(
+                        "adset",
+                        adset_id,
+                        sdf,
+                        *posts,
+                        response,
+                        source,
+                    )
                 )
-            )
+                emit_progress("adset", adset_id)
 
-        for (campaign_id, adset_id, ad_id), adf in df.groupby(
-            ["campaign_id", "adset_id", "ad_id"],
-            sort=False,
-        ):
+        ad_groups = (
+            df.groupby(
+                ["campaign_id", "adset_id", "ad_id"],
+                sort=False,
+            )
+            if "ad" in requested_levels
+            else []
+        )
+        for (campaign_id, adset_id, ad_id), adf in ad_groups:
             if (
                 active_ads is not None
                 and str(ad_id) not in active_ads
@@ -730,6 +819,7 @@ class BayesTrafficEngine:
                     source,
                 )
             )
+            emit_progress("ad", ad_id)
 
         all_actions = pd.DataFrame(rows)
         all_actions["data_quality_score"] = quality_report.score
