@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quant-trafego-bayesiano"
-version = "0.6.0"
+version = "0.7.0"
 description = "Motor quantitativo Bayesiano local para tráfego pago"
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -23,7 +23,8 @@ dev = [
 ]
 deep = [
   "pymc>=6.2,<6.3",
-  "arviz>=1.2,<2"
+  "arviz>=1.2,<2",
+  "matplotlib>=3.8,<3.11"
 ]
 optimization = [
   "botorch",
@@ -38,6 +39,9 @@ marketing = [
 quant-trafego = "quant_trafego.cli:main"
 quant-trafego-mcmc = "quant_trafego.deep_cli:main"
 quant-trafego-backtest = "quant_trafego.backtest_cli:main"
+quant-trafego-compare-models = "quant_trafego.model_compare_cli:main"
+quant-trafego-optimize = "quant_trafego.optimize_cli:main"
+quant-trafego-portfolio = "quant_trafego.portfolio_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
