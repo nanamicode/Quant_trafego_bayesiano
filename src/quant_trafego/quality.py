@@ -217,11 +217,15 @@ def assess_data_quality(
     # exposure. Daily conversions > daily clicks is therefore not itself a
     # tracking violation. Clicks > impressions is impossible, while
     # conversions > clicks is checked over the ad's full observed history.
-    funnel_violation = (
+    impossible_click_mask = (
         numeric["clicks"]
         > numeric["impressions"]
     ).fillna(False)
+    impossible_click_rows = int(
+        impossible_click_mask.sum()
+    )
 
+    aggregate_invalid_ads: set[str] = set()
     if "ad_id" in df.columns:
         aggregate_check = pd.DataFrame(
             {
@@ -230,17 +234,24 @@ def assess_data_quality(
                 "conversions": numeric["conversions"].fillna(0.0),
             }
         ).groupby("ad_id", as_index=False).sum()
-        invalid_ads = set(
+        aggregate_invalid_ads = set(
             aggregate_check.loc[
                 aggregate_check["conversions"]
                 > aggregate_check["clicks"],
                 "ad_id",
             ].astype(str)
         )
-        if invalid_ads:
-            funnel_violation |= (
-                df["ad_id"].astype(str).isin(invalid_ads)
-            )
+
+        represented_ads = set(
+            df.loc[
+                impossible_click_mask,
+                "ad_id",
+            ].astype(str)
+        )
+        aggregate_only_count = len(
+            aggregate_invalid_ads
+            - represented_ads
+        )
     else:
         total_clicks = float(
             numeric["clicks"].fillna(0.0).sum()
@@ -248,11 +259,14 @@ def assess_data_quality(
         total_conversions = float(
             numeric["conversions"].fillna(0.0).sum()
         )
-        if total_conversions > total_clicks:
-            funnel_violation[:] = True
+        aggregate_only_count = int(
+            total_conversions > total_clicks
+            and impossible_click_rows == 0
+        )
 
-    funnel_tracking_violation_rows = int(
-        funnel_violation.sum()
+    funnel_tracking_violation_rows = (
+        impossible_click_rows
+        + aggregate_only_count
     )
 
     key = [
@@ -328,9 +342,8 @@ def assess_data_quality(
 
     if funnel_tracking_violation_rows:
         warnings.append(
-            f"{funnel_tracking_violation_rows} linhas pertencem a uma "
-            "estrutura com tracking agregado incoerente "
-            "(cliques > impressões ou conversões agregadas > cliques)."
+            f"{funnel_tracking_violation_rows} anomalias de tracking foram "
+            "detectadas (cliques > impressões ou conversões agregadas > cliques)."
         )
         penalty += min(
             30.0,
