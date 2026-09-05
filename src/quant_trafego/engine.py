@@ -1086,6 +1086,17 @@ class BayesTrafficEngine:
             )
 
         scale = all_actions["action_multiplier"] > 1.0
+        recent_profit_ok = (
+            all_actions["recent_contribution_profit"]
+            > 0.0
+        )
+        if not self.config.require_recent_contribution_profit_for_scale:
+            recent_profit_ok = pd.Series(
+                True,
+                index=all_actions.index,
+            )
+
+        all_actions["recent_scale_sanity_ok"] = recent_profit_ok
         all_actions["policy_max_multiplier"] = caps
         all_actions["policy_eligible"] = (
             all_actions["action_multiplier"].to_numpy(dtype=float)
@@ -1094,6 +1105,7 @@ class BayesTrafficEngine:
             (~scale)
             | (
                 (quality_factor >= self.config.min_quality_for_scale)
+                & recent_profit_ok.to_numpy(dtype=bool)
                 & (
                     all_actions["p_profit"]
                     >= self.config.min_p_profit_for_scale
