@@ -13,6 +13,11 @@ def test_engine_runs():
     assert {"account", "campaign", "adset", "ad"} <= set(all_actions["level"])
     assert all_actions["p_profit"].between(0, 1).all()
     assert all_actions["p_roas_target"].between(0, 1).all()
+    assert all_actions["p_action_optimal"].between(0, 1).all()
+    assert best["decision_confidence"].between(0, 1).all()
+
+    sums = all_actions.groupby(["level", "entity_id"])["p_action_optimal"].sum()
+    assert ((sums - 1.0).abs() < 1e-9).all()
 
 
 def test_zero_contribution_margin_cannot_generate_profit_with_spend():
