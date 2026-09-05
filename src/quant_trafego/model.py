@@ -226,9 +226,11 @@ def simulate_action(
         profit = revenue * contribution_margin - spend
         roas = revenue / spend
 
-    q10 = float(np.quantile(profit, 0.10))
+    q05, q10, q50, q95 = np.quantile(profit, [0.05, 0.10, 0.50, 0.95])
     tail = profit[profit <= q10]
-    cvar10 = float(tail.mean()) if len(tail) else q10
+    cvar10 = float(tail.mean()) if len(tail) else float(q10)
+    revenue_q05, revenue_q50, revenue_q95 = np.quantile(revenue, [0.05, 0.50, 0.95])
+    roas_q05, roas_q50, roas_q95 = np.quantile(roas, [0.05, 0.50, 0.95])
 
     return {
         "multiplier": float(multiplier),
@@ -236,9 +238,18 @@ def simulate_action(
         "expected_revenue": float(revenue.mean()),
         "expected_profit": float(profit.mean()),
         "expected_roas": float(roas.mean()),
+        "profit_p05": float(q05),
+        "profit_p50": float(q50),
+        "profit_p95": float(q95),
+        "revenue_p05": float(revenue_q05),
+        "revenue_p50": float(revenue_q50),
+        "revenue_p95": float(revenue_q95),
+        "roas_p05": float(roas_q05),
+        "roas_p50": float(roas_q50),
+        "roas_p95": float(roas_q95),
         "p_profit": float(np.mean(profit > 0)),
         "p_roas_target": float(np.mean(roas >= target_roas)),
-        "var10_profit": q10,
+        "var10_profit": float(q10),
         "cvar10_profit": cvar10,
         "_profit_draws": profit,
     }
