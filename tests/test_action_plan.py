@@ -139,3 +139,57 @@ def test_plan_uses_recent_spend_when_budget_is_absent():
     assert row["amount_basis"] == "recent_7d_avg_daily_spend"
     assert row["current_daily_amount"] == 100.0
     assert row["recommended_daily_amount"] == 150.0
+
+
+def test_adset_allocation_replaces_independent_adset_action():
+    best = pd.concat(
+        [
+            _best(),
+            pd.DataFrame(
+                [
+                    {
+                        "level": "adset",
+                        "entity_id": "s1",
+                        "campaign_id": "c1",
+                        "campaign_name": "Campanha 1",
+                        "adset_id": "s1",
+                        "adset_name": "Conjunto 1",
+                        "action_multiplier": 1.5,
+                        "historical_days": 14,
+                        "historical_spend": 1400.0,
+                        "expected_profit": 500.0,
+                        "expected_revenue": 1500.0,
+                        "expected_incremental_profit_vs_hold": 100.0,
+                        "expected_incremental_revenue_vs_hold": 300.0,
+                        "p_profit": 0.9,
+                        "p_roas_target": 0.7,
+                        "p_beats_hold": 0.7,
+                        "p_incremental_profit_positive": 0.75,
+                        "p_action_optimal": 0.6,
+                        "cvar10_profit": 100.0,
+                        "expected_regret": 20.0,
+                        "response_confidence": 0.3,
+                        "evidence_tier": "observational_intervention",
+                        "policy_eligible": True,
+                        "policy_constrained": False,
+                        "data_quality_score": 95.0,
+                        "decision_score": 0.8,
+                    }
+                ]
+            ),
+        ],
+        ignore_index=True,
+        sort=False,
+    )
+    nested = best[best["level"] == "adset"].copy()
+    nested["action_multiplier"] = 0.8
+    nested["expected_incremental_profit_vs_hold"] = 40.0
+
+    plan = build_operational_action_plan(
+        best,
+        adset_allocation=nested,
+        horizon_days=7,
+    )
+    adset = plan[plan["level"] == "adset"].iloc[0]
+    assert adset["capital_action"] == "REDUZIR"
+    assert adset["action_multiplier"] == 0.8
