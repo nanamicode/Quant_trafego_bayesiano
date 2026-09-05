@@ -363,3 +363,126 @@ def test_engine_can_evaluate_only_account_and_campaign_with_progress():
         event["level"] in {"account", "campaign"}
         for event in events
     )
+
+
+def test_hold_action_uses_recent_delivery_not_full_history_average():
+    rows = []
+    for day in range(28):
+        spend = 20.0 if day < 21 else 100.0
+        rows.append(
+            {
+                "date": pd.Timestamp("2026-08-01") + pd.Timedelta(days=day),
+                "campaign_id": "c1",
+                "adset_id": "s1",
+                "ad_id": "a1",
+                "impressions": 10000,
+                "clicks": 200,
+                "conversions": 10,
+                "spend": spend,
+                "revenue": 1000.0,
+            }
+        )
+    all_actions, _ = BayesTrafficEngine(
+        EngineConfig(
+            draws=120,
+            seed=12,
+            contribution_margin=0.7,
+            actions=(0.8, 1.0, 1.2),
+        )
+    ).run(pd.DataFrame(rows))
+
+    account_hold = all_actions[
+        (all_actions["level"] == "account")
+        & (all_actions["action_multiplier"] == 1.0)
+    ].iloc[0]
+    assert account_hold["action_baseline_daily_spend"] == pytest.approx(100.0)
+    assert account_hold["expected_spend"] == pytest.approx(700.0)
+
+
+def test_negative_recent_contribution_profit_blocks_scale():
+    rows = []
+    for day in range(28):
+        recent = day >= 21
+        rows.append(
+            {
+                "date": pd.Timestamp("2026-08-01") + pd.Timedelta(days=day),
+                "campaign_id": "c1",
+                "adset_id": "s1",
+                "ad_id": "a1",
+                "impressions": 10000,
+                "clicks": 300,
+                "conversions": 20,
+                "spend": 100.0,
+                "revenue": 300.0 if not recent else 80.0,
+            }
+        )
+
+    all_actions, best = BayesTrafficEngine(
+        EngineConfig(
+            draws=150,
+            seed=22,
+            contribution_margin=0.70,
+            actions=(0.8, 1.0, 1.2),
+        )
+    ).run(pd.DataFrame(rows))
+
+    scale = all_actions["action_multiplier"] > 1.0
+    assert (~all_actions.loc[scale, "recent_scale_sanity_ok"]).all()
+    assert (~all_actions.loc[scale, "policy_eligible"]).all()
+    assert (best["action_multiplier"] <= 1.0).all()
+
+
+def test_single_child_ad_uses_external_context_prior_not_its_own_parent_recycled():
+    rows = []
+    for day in range(14):
+        date = pd.Timestamp("2026-08-01") + pd.Timedelta(days=day)
+        rows.extend(
+            [
+                {
+                    "date": date,
+                    "campaign_id": "c1",
+                    "adset_id": "s1",
+                    "ad_id": "a1",
+                    "impressions": 1000,
+                    "clicks": 100,
+                    "conversions": 10,
+                    "spend": 100.0,
+                    "revenue": 1000.0,
+                },
+                {
+                    "date": date,
+                    "campaign_id": "c2",
+                    "adset_id": "s2",
+                    "ad_id": "a2",
+                    "impressions": 1000,
+                    "clicks": 10,
+                    "conversions": 1,
+                    "spend": 100.0,
+                    "revenue": 100.0,
+                },
+            ]
+        )
+    df = pd.DataFrame(rows)
+    engine = BayesTrafficEngine(
+        EngineConfig(
+            draws=100,
+            seed=4,
+            contribution_margin=0.7,
+        )
+    )
+    actions, _ = engine.run(df)
+    ad = actions[
+        (actions["level"] == "ad")
+        & (actions["entity_id"] == "a1")
+    ].iloc[0]
+
+    external = df[df["campaign_id"] == "c2"]
+    expected_parent = engine._global_posteriors(external)
+    expected_ad = engine._posterior(
+        df[df["ad_id"] == "a1"],
+        *expected_parent,
+        engine.config.ad_ctr_strength,
+        engine.config.ad_cvr_strength,
+    )
+    assert ad["posterior_ctr_mean"] == pytest.approx(expected_ad[0].mean)
+    assert ad["posterior_cvr_mean"] == pytest.approx(expected_ad[1].mean)
