@@ -206,4 +206,8 @@ def analyze_state_space_temporal(
         instability_score=baseline.instability_score,
         recent_days=baseline.recent_days,
         history_days=baseline.history_days,
+        ctr_current_logit_shift=baseline.ctr_current_logit_shift,
+        cvr_current_logit_shift=baseline.cvr_current_logit_shift,
+        ctr_current_shift_confidence=baseline.ctr_current_shift_confidence,
+        cvr_current_shift_confidence=baseline.cvr_current_shift_confidence,
     )
