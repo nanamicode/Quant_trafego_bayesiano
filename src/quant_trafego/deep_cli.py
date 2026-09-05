@@ -3,11 +3,14 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 
+from .action_plan import build_operational_action_plan, write_operational_action_plan
 from .deep_analysis import run_deep_analysis
 from .engine import EngineConfig
 from .funnel import hierarchical_funnel_diagnostics
 from .hardware import detect_hardware
 from .io import filter_active, load_ads_file
+from .optimization import optimize_campaign_allocation
+from .portfolio import optimize_campaign_portfolio
 from .quality import assess_data_quality
 from .reproducibility import build_run_manifest, write_run_manifest
 from .storage import LocalWarehouse
@@ -98,6 +101,38 @@ def main():
         output_dir=args.output,
     )
 
+    allocation = None
+    allocation_summary = None
+    try:
+        allocation, allocation_summary = optimize_campaign_portfolio(
+            result.all_actions,
+            df,
+            contribution_margin=config.contribution_margin,
+        )
+    except Exception as portfolio_exc:
+        try:
+            allocation, allocation_summary = optimize_campaign_allocation(
+                result.all_actions
+            )
+            allocation_summary["fallback_reason"] = str(portfolio_exc)
+        except Exception as allocation_exc:
+            allocation_summary = {
+                "status": "unavailable",
+                "reason": str(allocation_exc),
+                "portfolio_reason": str(portfolio_exc),
+            }
+
+    operational_plan = build_operational_action_plan(
+        result.best_actions,
+        allocation=allocation,
+        source_df=df,
+        horizon_days=config.horizon_days,
+    )
+    write_operational_action_plan(
+        operational_plan,
+        args.output,
+    )
+
     manifest = build_run_manifest(
         df,
         config=config,
@@ -111,6 +146,7 @@ def main():
             "ppc_summary": result.ppc_summary.__dict__,
             "deep_decision_source": result.decision_source,
             "deep_guardrail": result.guardrail,
+            "allocation_summary": allocation_summary,
         },
     )
     write_run_manifest(manifest, args.output)
@@ -132,14 +168,47 @@ def main():
                 if not funnel_detail.empty
                 else {}
             ),
+            **(
+                {"allocation": allocation}
+                if allocation is not None
+                else {}
+            ),
+            **(
+                {"operational_action_plan": operational_plan}
+                if not operational_plan.empty
+                else {}
+            ),
         },
-        extra_json={"posterior_predictive_summary": result.ppc_summary.__dict__},
+        extra_json={
+            "posterior_predictive_summary": result.ppc_summary.__dict__,
+            "allocation_summary": allocation_summary or {},
+        },
     )
     print(f"Run auditável: {run_dir}")
     print(result.diagnostics)
     print(result.ppc_summary)
     print(f"Fonte decisória profunda: {result.decision_source}")
     print(f"Guardrail profundo: {result.guardrail}")
+    print("\nPLANO OPERACIONAL")
+    operational_cols = [
+        "level",
+        "campaign_name",
+        "adset_name",
+        "ad_name",
+        "capital_action",
+        "current_daily_amount",
+        "recommended_daily_amount",
+        "daily_amount_change",
+        "duplicate_action",
+        "expected_incremental_profit",
+        "expected_incremental_revenue",
+        "p_incremental_profit_positive",
+    ]
+    print(
+        operational_plan[operational_cols].to_string(index=False)
+        if not operational_plan.empty
+        else "Nenhuma ação operacional disponível."
+    )
     cols = [
         "level",
         "entity_id",
