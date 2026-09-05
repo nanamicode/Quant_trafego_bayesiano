@@ -8,6 +8,27 @@ Hierarquia principal:
 
 O objetivo é transformar planilhas históricas de mídia em inferência probabilística auditável, validação fora da amostra e decisões econômicas sob incerteza — sem servidor pago.
 
+## Saída operacional principal
+
+A v0.9 transforma a inferência em um plano executável. A primeira saída a consultar é `operational_action_plan.csv`.
+
+Ela responde por campanha, conjunto e anúncio:
+
+- aumentar quanto;
+- reduzir quanto;
+- manter;
+- desligar;
+- quando existe evidência para testar/usar duplicação;
+- impacto esperado em lucro e faturamento;
+- probabilidades e risco da decisão.
+
+Lucro é o objetivo primário. Entre soluções próximas do ótimo de lucro ajustado a risco, o motor favorece maior faturamento.
+
+A margem de contribuição é obrigatória. O sistema não assume 100% silenciosamente.
+
+Guia completo: `docs/OPERATIONAL_USAGE.md`.
+Template de entrada: `examples/operational_input_template.csv`.
+
 ## Ambiente oficial
 
 O runtime é **Python 3.12**.
