@@ -8,6 +8,7 @@ import tempfile
 import streamlit as st
 
 from quant_trafego.action_plan import build_operational_action_plan, derive_account_budget_target
+from quant_trafego.development_diagnostics import build_development_diagnostics
 from quant_trafego.engine import BayesTrafficEngine, EngineConfig
 from quant_trafego.funnel import detect_funnel_schema, hierarchical_funnel_diagnostics
 from quant_trafego.hardware import detect_hardware
@@ -526,6 +527,28 @@ def main():
                 log=True,
             )
 
+            development_diagnostics = build_development_diagnostics(
+                full_df=df,
+                operational_df=operational_df,
+                all_actions=all_actions,
+                best_actions=best,
+                quality=quality,
+                telemetry=telemetry,
+                inference_mode=(
+                    f"mcmc_{diagnostics.method}"
+                    if diagnostics is not None
+                    else "empirical_bayes"
+                ),
+                config=config,
+                model_decision=model_decision,
+                allocation_summary=allocation_summary,
+                adset_allocation_summary=adset_allocation_summary,
+                diagnostics=diagnostics,
+                ppc_summary=ppc_summary,
+                deep_decision_source=deep_decision_source,
+                deep_guardrail=deep_guardrail,
+            )
+
             manifest = build_run_manifest(
                 df,
                 config=config,
@@ -552,6 +575,7 @@ def main():
                     "deep_decision_source": deep_decision_source,
                     "deep_guardrail": deep_guardrail,
                     "runtime_telemetry": telemetry.developer_snapshot(),
+                    "development_diagnostics": development_diagnostics,
                 },
             )
             workspace = LocalWarehouse("workspace")
@@ -577,6 +601,7 @@ def main():
             extra_tables["runtime_telemetry"] = telemetry.dataframe()
             extra_tables["runtime_stage_summary"] = telemetry.stage_summary()
             extra_json["runtime_telemetry"] = telemetry.developer_snapshot()
+            extra_json["development_diagnostics"] = development_diagnostics
             if diagnostics is not None:
                 extra_tables["posterior_predictive_checks"] = result.ppc_detail
                 if result.guardrail != "none":
@@ -608,6 +633,38 @@ def main():
             ).write_text(
                 json.dumps(
                     telemetry.developer_snapshot(),
+                    indent=2,
+                    ensure_ascii=False,
+                    default=str,
+                ),
+                encoding="utf-8",
+            )
+            development_diagnostics = build_development_diagnostics(
+                full_df=df,
+                operational_df=operational_df,
+                all_actions=all_actions,
+                best_actions=best,
+                quality=quality,
+                telemetry=telemetry,
+                inference_mode=(
+                    f"mcmc_{diagnostics.method}"
+                    if diagnostics is not None
+                    else "empirical_bayes"
+                ),
+                config=config,
+                model_decision=model_decision,
+                allocation_summary=allocation_summary,
+                adset_allocation_summary=adset_allocation_summary,
+                diagnostics=diagnostics,
+                ppc_summary=ppc_summary,
+                deep_decision_source=deep_decision_source,
+                deep_guardrail=deep_guardrail,
+            )
+            (
+                run_dir / "development_diagnostics.json"
+            ).write_text(
+                json.dumps(
+                    development_diagnostics,
                     indent=2,
                     ensure_ascii=False,
                     default=str,
@@ -906,6 +963,17 @@ def main():
         with tab_all:
             st.dataframe(all_actions, use_container_width=True, hide_index=True)
 
+        st.download_button(
+            "Baixar diagnóstico de desenvolvimento (JSON)",
+            json.dumps(
+                development_diagnostics,
+                indent=2,
+                ensure_ascii=False,
+                default=str,
+            ).encode("utf-8"),
+            file_name="development_diagnostics.json",
+            mime="application/json",
+        )
         st.download_button(
             "Baixar plano operacional (CSV)",
             operational_plan.to_csv(index=False).encode("utf-8-sig"),
