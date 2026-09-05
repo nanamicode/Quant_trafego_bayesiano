@@ -451,26 +451,19 @@ class RunMonitor:
             f"**Contexto:** {c['historical_days']} dias · "
             f"{c['historical_campaigns']} campanhas · "
             f"{c['historical_adsets']} conjuntos · "
-            f"{c['historical_ads']} anúncios  
-"
+            f"{c['historical_ads']} anúncios  \n"
             f"**Árvore ativa:** CONTA → "
             f"{c['active_campaigns']} campanhas → "
             f"{c['active_adsets']} conjuntos → "
-            f"{c['active_ads']} anúncios  
-"
-            f"**Ações por entidade:** {actions}  
-"
+            f"{c['active_ads']} anúncios  \n"
+            f"**Ações por entidade:** {actions}  \n"
             f"**Monte Carlo:** {c['draws']:,} mundos latentes por entidade · "
-            f"~{c['action_worlds']:,} avaliações ação×mundo  
-"
-            f"**Horizonte decisório:** {c['horizon_days']} dias  
-"
+            f"~{c['action_worlds']:,} avaliações ação×mundo  \n"
+            f"**Horizonte decisório:** {c['horizon_days']} dias  \n"
             f"**Rolling-origin:** {c['rolling_origins']} janelas × "
-            f"{c['temporal_models']} modelos temporais  
-"
+            f"{c['temporal_models']} modelos temporais  \n"
             f"**Temporal:** {c['temporal_model']} · "
-            f"sazonalidade semanal {seasonality}  
-"
+            f"sazonalidade semanal {seasonality}  \n"
             "**Variáveis:** CTR · CVR · CPM · AOV · spend · receita · "
             "lucro · ROAS · elasticidade · tendência · regime · sazonalidade · "
             "VaR/CVaR · regret."
