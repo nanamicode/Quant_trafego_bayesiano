@@ -116,3 +116,26 @@ def test_portfolio_allocation_replaces_independent_campaign_action():
     campaign = plan[plan["level"] == "campaign"].iloc[0]
     assert campaign["capital_action"] == "REDUZIR"
     assert campaign["action_multiplier"] == 0.8
+
+
+def test_plan_uses_recent_spend_when_budget_is_absent():
+    source = pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp("2026-08-20") + pd.Timedelta(days=day),
+                "campaign_id": "c1",
+                "spend": 20.0 if day < 3 else 100.0,
+            }
+            for day in range(10)
+        ]
+    )
+    best = _best()
+    plan = build_operational_action_plan(
+        best[best["level"] == "campaign"],
+        source_df=source,
+        horizon_days=7,
+    )
+    row = plan.iloc[0]
+    assert row["amount_basis"] == "recent_7d_avg_daily_spend"
+    assert row["current_daily_amount"] == 100.0
+    assert row["recommended_daily_amount"] == 150.0
