@@ -1,0 +1,11 @@
+def test_base_and_deep_modules_import_without_optional_pymc_runtime():
+    import quant_trafego.cli
+    import quant_trafego.deep_analysis
+    import quant_trafego.deep_cli
+    import quant_trafego.engine
+    import quant_trafego.hardware
+    import quant_trafego.mcmc
+    import quant_trafego.quality
+    import quant_trafego.response
+    import quant_trafego.temporal
+    import quant_trafego.ui
