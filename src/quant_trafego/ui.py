@@ -10,7 +10,7 @@ from quant_trafego.action_plan import build_operational_action_plan, derive_acco
 from quant_trafego.engine import BayesTrafficEngine, EngineConfig
 from quant_trafego.funnel import detect_funnel_schema, hierarchical_funnel_diagnostics
 from quant_trafego.hardware import detect_hardware
-from quant_trafego.io import filter_active, load_ads_file
+from quant_trafego.io import filter_decision_rows, infer_decision_universe, load_ads_file
 from quant_trafego.model_selection import compare_temporal_models
 from quant_trafego.optimization import optimize_adset_allocation, optimize_campaign_allocation
 from quant_trafego.portfolio import optimize_campaign_portfolio
@@ -89,7 +89,7 @@ def main():
             step=0.05,
         )
     with c7:
-        include_inactive = st.checkbox("Incluir entidades inativas", value=False)
+        include_inactive = st.checkbox("Gerar decisões também para entidades inativas", value=False, help="O histórico inativo sempre entra como contexto estatístico. Marque apenas se quiser receber ações também para entidades hoje inativas.")
         validate_temporal = st.checkbox(
             "Validar modelos temporais fora da amostra",
             value=True,
@@ -150,11 +150,31 @@ def main():
                 path.write_bytes(uploaded.getbuffer())
                 df = load_ads_file(path)
 
+            decision_entities = None
+            operational_df = df
             if not include_inactive:
-                st.write("Filtrando entidades ativas...")
-                df = filter_active(df)
+                st.write(
+                    "Mantendo todo o histórico como contexto e identificando "
+                    "somente a estrutura ativa para decisões..."
+                )
+                universe = infer_decision_universe(df)
+                decision_entities = {
+                    "campaign": universe.campaign_ids,
+                    "adset": universe.adset_ids,
+                    "ad": universe.ad_ids,
+                }
+                operational_df = filter_decision_rows(
+                    df,
+                    universe,
+                )
+                st.caption(
+                    f"Detecção de ativos: {universe.detection_method} | "
+                    f"{len(universe.campaign_ids)} campanhas | "
+                    f"{len(universe.adset_ids)} conjuntos | "
+                    f"{len(universe.ad_ids)} anúncios."
+                )
 
-            quality = assess_data_quality(df)
+            quality = assess_data_quality(operational_df)
             funnel_schema = detect_funnel_schema(df)
             funnel_detail = hierarchical_funnel_diagnostics(df)
             st.write(
@@ -201,6 +221,7 @@ def main():
                 result = run_deep_analysis(
                     df,
                     engine_config=config,
+                    decision_entities=decision_entities,
                     mcmc_draws=int(mcmc_draws),
                     mcmc_tune=int(mcmc_tune),
                     mcmc_chains=hw.recommended_mcmc_chains,
@@ -219,7 +240,10 @@ def main():
                     "regime e resposta observacional ao gasto..."
                 )
                 engine = BayesTrafficEngine(config)
-                all_actions, best = engine.run(df)
+                all_actions, best = engine.run(
+                    df,
+                    decision_entities=decision_entities,
+                )
 
             model_comparison = None
             model_decision = None
@@ -245,7 +269,7 @@ def main():
 
             account_budget_target = derive_account_budget_target(
                 best,
-                source_df=df,
+                source_df=operational_df,
                 horizon_days=config.horizon_days,
             )
             allocation = None
@@ -290,7 +314,7 @@ def main():
                 allocation=allocation,
                 adset_allocation=adset_allocation,
                 account_budget_target=account_budget_target,
-                source_df=df,
+                source_df=operational_df,
                 horizon_days=config.horizon_days,
             )
 
