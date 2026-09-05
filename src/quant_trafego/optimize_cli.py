@@ -17,6 +17,7 @@ def main():
     parser.add_argument("--output", default="allocation_output")
     parser.add_argument("--budget", type=float)
     parser.add_argument("--min-p-profit-scale", type=float, default=0.60)
+    parser.add_argument("--min-p-incremental-scale", type=float, default=0.55)
     parser.add_argument("--max-downside-proxy", type=float)
     args = parser.parse_args()
 
@@ -26,6 +27,7 @@ def main():
         total_budget=args.budget,
         config=AllocationConfig(
             min_p_profit_for_scale=args.min_p_profit_scale,
+            min_p_incremental_for_scale=args.min_p_incremental_scale,
             max_total_downside_proxy=args.max_downside_proxy,
         ),
     )
