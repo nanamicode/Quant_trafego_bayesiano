@@ -9,7 +9,7 @@ from .engine import EngineConfig
 from .funnel import hierarchical_funnel_diagnostics
 from .hardware import detect_hardware
 from .io import filter_active, load_ads_file
-from .optimization import optimize_campaign_allocation
+from .optimization import optimize_adset_allocation, optimize_campaign_allocation
 from .portfolio import optimize_campaign_portfolio
 from .quality import assess_data_quality
 from .reproducibility import build_run_manifest, write_run_manifest
@@ -122,9 +122,24 @@ def main():
                 "portfolio_reason": str(portfolio_exc),
             }
 
+    adset_allocation = None
+    adset_allocation_summary = None
+    if allocation is not None:
+        try:
+            adset_allocation, adset_allocation_summary = optimize_adset_allocation(
+                result.all_actions,
+                allocation,
+            )
+        except Exception as adset_exc:
+            adset_allocation_summary = {
+                "status": "unavailable",
+                "reason": str(adset_exc),
+            }
+
     operational_plan = build_operational_action_plan(
         result.best_actions,
         allocation=allocation,
+        adset_allocation=adset_allocation,
         source_df=df,
         horizon_days=config.horizon_days,
     )
@@ -147,6 +162,7 @@ def main():
             "deep_decision_source": result.decision_source,
             "deep_guardrail": result.guardrail,
             "allocation_summary": allocation_summary,
+            "adset_allocation_summary": adset_allocation_summary,
         },
     )
     write_run_manifest(manifest, args.output)
@@ -174,6 +190,11 @@ def main():
                 else {}
             ),
             **(
+                {"adset_allocation": adset_allocation}
+                if adset_allocation is not None and not adset_allocation.empty
+                else {}
+            ),
+            **(
                 {"operational_action_plan": operational_plan}
                 if not operational_plan.empty
                 else {}
@@ -182,6 +203,7 @@ def main():
         extra_json={
             "posterior_predictive_summary": result.ppc_summary.__dict__,
             "allocation_summary": allocation_summary or {},
+            "adset_allocation_summary": adset_allocation_summary or {},
         },
     )
     print(f"Run auditável: {run_dir}")
