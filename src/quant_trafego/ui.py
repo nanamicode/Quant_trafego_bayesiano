@@ -6,7 +6,7 @@ import tempfile
 
 import streamlit as st
 
-from quant_trafego.action_plan import build_operational_action_plan
+from quant_trafego.action_plan import build_operational_action_plan, derive_account_budget_target
 from quant_trafego.engine import BayesTrafficEngine, EngineConfig
 from quant_trafego.funnel import detect_funnel_schema, hierarchical_funnel_diagnostics
 from quant_trafego.hardware import detect_hardware
@@ -243,6 +243,11 @@ def main():
                     step_days=max(1, int(horizon_days)),
                 )
 
+            account_budget_target = derive_account_budget_target(
+                best,
+                source_df=df,
+                horizon_days=config.horizon_days,
+            )
             allocation = None
             allocation_summary = None
             try:
@@ -250,11 +255,13 @@ def main():
                     all_actions,
                     df,
                     contribution_margin=config.contribution_margin,
+                    total_budget=account_budget_target["recommended_horizon_amount"],
                 )
             except Exception as portfolio_exc:
                 try:
                     allocation, allocation_summary = optimize_campaign_allocation(
-                        all_actions
+                        all_actions,
+                        total_budget=account_budget_target["recommended_horizon_amount"],
                     )
                     allocation_summary["fallback_reason"] = str(portfolio_exc)
                 except Exception as allocation_exc:
@@ -282,6 +289,7 @@ def main():
                 best,
                 allocation=allocation,
                 adset_allocation=adset_allocation,
+                account_budget_target=account_budget_target,
                 source_df=df,
                 horizon_days=config.horizon_days,
             )
@@ -306,6 +314,7 @@ def main():
                         ppc_summary.__dict__ if ppc_summary is not None else None
                     ),
                     "temporal_model_decision": model_decision,
+                    "account_budget_target": account_budget_target,
                     "allocation_summary": allocation_summary,
                     "adset_allocation_summary": adset_allocation_summary,
                     "deep_decision_source": deep_decision_source,
