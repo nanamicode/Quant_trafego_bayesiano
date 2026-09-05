@@ -60,6 +60,13 @@ O modelo PyMC produz posteriores por conta, campanha, conjunto e anúncio. NUTS 
 
 ## Validação probabilística
 
+A v0.7 separa três perguntas diferentes:
+
+- **o modelo converge numericamente?** → R-hat, ESS e divergências;
+- **o modelo consegue reproduzir dados plausíveis?** → posterior predictive checks;
+- **o modelo prevê melhor fora da amostra?** → rolling-origin + proper scores.
+
+
 Backtesting temporal é parte da arquitetura, não um relatório opcional.
 
 Exemplo:
@@ -81,6 +88,8 @@ Métricas atuais:
 - Brier score de lucro;
 - Brier score de ROAS alvo;
 - calibration gap;
+- Expected Calibration Error (ECE);
+- reliability tables por faixa de probabilidade;
 - cobertura do intervalo de 90%;
 - largura/sharpness do intervalo;
 - interval score;
@@ -102,6 +111,52 @@ A arquitetura distingue níveis de evidência:
 - `experiment_calibrated`.
 
 Decisões agressivas de alocação devem receber restrições mais conservadoras quando a resposta ao gasto não tiver calibração experimental.
+
+## Modelos temporais
+
+Existem dois modelos temporais no motor rápido:
+
+- `derivative`: regressão derivativa local ponderada por recência;
+- `state_space`: estado local-linear Bayesiano aproximado por filtro de Kalman no espaço logit.
+
+O state-space é tratado como **candidato**. Para comparar:
+
+```bat
+uv run quant-trafego-compare-models --input "C:\dados\meta.xlsx"
+```
+
+Ele só deve substituir o modelo de referência quando passar os gates de backtesting, calibração e cobertura.
+
+No modo profundo, o PyMC preserva observações diárias e adiciona um efeito temporal global `GaussianRandomWalk`. A decisão usa o posterior do estado temporal corrente.
+
+## Política de decisão
+
+O sistema mantém duas respostas:
+
+- `unconstrained_best_multiplier`: ótimo matemático sem política;
+- `action_multiplier`: recomendação permitida pelo nível de evidência.
+
+Scale-ups são limitados quando a resposta ao gasto é apenas preditiva/observacional e exigem probabilidades mínimas de lucro e ganho incremental.
+
+## Otimização global
+
+A grade discreta atual é resolvida exatamente por MILP:
+
+```bat
+uv run quant-trafego-optimize --actions output\all_actions.csv
+```
+
+Quando o histórico original também está disponível, o modo preferido usa cenários correlacionados e CVaR:
+
+```bat
+uv run quant-trafego-portfolio --actions output\all_actions.csv --history "C:\dados\meta.xlsx" --contribution-margin 0.40
+```
+
+Esse portfólio usa correlação histórica encolhida + cópula Gaussiana para dependência estatística. Isso melhora risco conjunto, mas **não é uma estimativa causal de canibalização de leilão**.
+
+## Funil opcional
+
+Quando a planilha contém colunas como reach, frequency, landing page views, add-to-cart e checkout, elas são preservadas. O sistema constrói transições probabilísticas e intervalos posteriores por conta, campanha, conjunto e anúncio, além de apontar violações de tracking.
 
 ## Warehouse local e auditoria
 
@@ -137,7 +192,7 @@ O `run_manifest.json` registra:
 
 ## Componentes quantitativos implementados
 
-- posterior hierárquico de CTR e CVR;
+- posterior hierárquico diário de CTR e CVR;
 - partial pooling conta → campanha → conjunto → anúncio;
 - derivadas temporais no espaço logit;
 - comparação recente × histórico;
@@ -162,7 +217,14 @@ O `run_manifest.json` registra:
 - decisão com score de confiança;
 - autodetecção de CPU/RAM;
 - qualidade estrutural da base;
+- posterior predictive checks;
+- state-space temporal candidato;
 - rolling-origin backtesting;
+- reliability tables e ECE;
+- política de decisão baseada em evidência;
+- alocação MILP exata;
+- portfólio correlacionado com CVaR;
+- diagnóstico probabilístico de funil opcional;
 - persistência DuckDB/Parquet;
 - manifestos reproduzíveis.
 
