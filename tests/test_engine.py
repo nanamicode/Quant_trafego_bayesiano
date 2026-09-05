@@ -294,3 +294,41 @@ def test_inactive_history_informs_active_prior_without_receiving_actions():
         "posterior_ctr_mean",
     ].iloc[0]
     assert full_ctr > active_ctr
+
+
+def test_daily_attributed_conversions_may_exceed_same_day_clicks():
+    df = pd.DataFrame(
+        [
+            {
+                "date": "2026-09-01",
+                "campaign_id": "c1",
+                "adset_id": "s1",
+                "ad_id": "a1",
+                "impressions": 1000,
+                "clicks": 0,
+                "conversions": 1,
+                "spend": 50.0,
+                "revenue": 100.0,
+            },
+            {
+                "date": "2026-09-02",
+                "campaign_id": "c1",
+                "adset_id": "s1",
+                "ad_id": "a1",
+                "impressions": 1000,
+                "clicks": 20,
+                "conversions": 0,
+                "spend": 50.0,
+                "revenue": 0.0,
+            },
+        ]
+    )
+    engine = BayesTrafficEngine(
+        EngineConfig(
+            draws=100,
+            seed=3,
+        )
+    )
+    all_actions, best = engine.run(df)
+    assert not all_actions.empty
+    assert not best.empty
