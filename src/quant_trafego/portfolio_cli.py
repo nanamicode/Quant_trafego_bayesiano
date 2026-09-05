@@ -19,7 +19,7 @@ def main():
     parser.add_argument("--history", required=True, help="CSV/XLSX histórico original")
     parser.add_argument("--output", default="portfolio_output")
     parser.add_argument("--budget", type=float)
-    parser.add_argument("--contribution-margin", type=float, default=1.0)
+    parser.add_argument("--contribution-margin", type=float, required=True)
     parser.add_argument("--cvar-alpha", type=float, default=0.10)
     parser.add_argument("--cvar-weight", type=float, default=0.25)
     parser.add_argument("--min-portfolio-cvar", type=float)
