@@ -11,6 +11,7 @@ from quant_trafego.hardware import detect_hardware
 from quant_trafego.io import filter_active, load_ads_file
 from quant_trafego.model_selection import compare_temporal_models
 from quant_trafego.optimization import optimize_campaign_allocation
+from quant_trafego.portfolio import optimize_campaign_portfolio
 from quant_trafego.quality import assess_data_quality
 from quant_trafego.reproducibility import build_run_manifest
 from quant_trafego.storage import LocalWarehouse
@@ -218,14 +219,23 @@ def main():
             allocation = None
             allocation_summary = None
             try:
-                allocation, allocation_summary = optimize_campaign_allocation(
-                    all_actions
+                allocation, allocation_summary = optimize_campaign_portfolio(
+                    all_actions,
+                    df,
+                    contribution_margin=config.contribution_margin,
                 )
-            except Exception as allocation_exc:
-                allocation_summary = {
-                    "status": "unavailable",
-                    "reason": str(allocation_exc),
-                }
+            except Exception as portfolio_exc:
+                try:
+                    allocation, allocation_summary = optimize_campaign_allocation(
+                        all_actions
+                    )
+                    allocation_summary["fallback_reason"] = str(portfolio_exc)
+                except Exception as allocation_exc:
+                    allocation_summary = {
+                        "status": "unavailable",
+                        "reason": str(allocation_exc),
+                        "portfolio_reason": str(portfolio_exc),
+                    }
 
             manifest = build_run_manifest(
                 df,
@@ -394,16 +404,24 @@ def main():
                     "Budget selecionado",
                     _fmt_money(allocation_summary["selected_spend"]),
                 )
+                expected_portfolio_profit = allocation_summary.get(
+                    "expected_portfolio_profit",
+                    allocation_summary.get("expected_portfolio_profit_additive", 0.0),
+                )
                 a2.metric(
-                    "Lucro esperado aditivo",
-                    _fmt_money(
-                        allocation_summary["expected_portfolio_profit_additive"]
-                    ),
+                    "Lucro esperado do portfólio",
+                    _fmt_money(expected_portfolio_profit),
                 )
-                a3.metric(
-                    "Regret aditivo",
-                    _fmt_money(allocation_summary["expected_regret_additive"]),
-                )
+                if "scenario_portfolio_cvar" in allocation_summary:
+                    a3.metric(
+                        "CVaR do portfólio",
+                        _fmt_money(allocation_summary["scenario_portfolio_cvar"]),
+                    )
+                else:
+                    a3.metric(
+                        "Regret aditivo",
+                        _fmt_money(allocation_summary.get("expected_regret_additive", 0.0)),
+                    )
                 st.dataframe(
                     allocation[
                         [
