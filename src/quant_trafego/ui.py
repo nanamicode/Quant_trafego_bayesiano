@@ -6,6 +6,7 @@ import tempfile
 
 import streamlit as st
 
+from quant_trafego.action_plan import build_operational_action_plan
 from quant_trafego.engine import BayesTrafficEngine, EngineConfig
 from quant_trafego.funnel import detect_funnel_schema, hierarchical_funnel_diagnostics
 from quant_trafego.hardware import detect_hardware
@@ -255,6 +256,13 @@ def main():
                         "portfolio_reason": str(portfolio_exc),
                     }
 
+            operational_plan = build_operational_action_plan(
+                best,
+                allocation=allocation,
+                source_df=df,
+                horizon_days=config.horizon_days,
+            )
+
             manifest = build_run_manifest(
                 df,
                 config=config,
@@ -285,6 +293,8 @@ def main():
             extra_json = {}
             if allocation is not None:
                 extra_tables["allocation"] = allocation
+            if operational_plan is not None and not operational_plan.empty:
+                extra_tables["operational_action_plan"] = operational_plan
             if funnel_detail is not None and not funnel_detail.empty:
                 extra_tables["funnel_diagnostics"] = funnel_detail
             if model_comparison is not None and not model_comparison.empty:
@@ -398,8 +408,9 @@ def main():
             "opportunity_score",
         ]
 
-        tab_overall, tab_campaign, tab_adset, tab_ad, tab_funnel, tab_alloc, tab_validation, tab_all = st.tabs(
+        tab_plan, tab_overall, tab_campaign, tab_adset, tab_ad, tab_funnel, tab_alloc, tab_validation, tab_all = st.tabs(
             [
+                "Plano operacional",
                 "Decisões",
                 "Campanhas",
                 "Conjuntos",
@@ -410,6 +421,52 @@ def main():
                 "Todas as simulações",
             ]
         )
+        with tab_plan:
+            if operational_plan.empty:
+                st.info("Nenhuma ação operacional disponível.")
+            else:
+                counts = operational_plan["capital_action"].value_counts()
+                p1, p2, p3, p4 = st.columns(4)
+                p1.metric("Aumentar/priorizar", int(
+                    counts.get("AUMENTAR", 0) + counts.get("PRIORIZAR_MAIS", 0)
+                ))
+                p2.metric("Reduzir", int(
+                    counts.get("REDUZIR", 0) + counts.get("REDUZIR_EXPOSICAO", 0)
+                ))
+                p3.metric("Desligar", int(counts.get("DESLIGAR", 0)))
+                p4.metric(
+                    "Duplicação/teste",
+                    int(
+                        operational_plan["duplicate_action"]
+                        .isin(["DUPLICAR", "TESTAR_DUPLICACAO"])
+                        .sum()
+                    ),
+                )
+                st.dataframe(
+                    operational_plan[
+                        [
+                            "level",
+                            "campaign_name",
+                            "adset_name",
+                            "ad_name",
+                            "capital_action",
+                            "current_daily_amount",
+                            "recommended_daily_amount",
+                            "daily_amount_change",
+                            "duplicate_action",
+                            "suggested_additional_copies",
+                            "expected_incremental_profit",
+                            "expected_incremental_revenue",
+                            "p_incremental_profit_positive",
+                            "p_profit",
+                            "p_roas_target",
+                            "decision_score",
+                            "execution_note",
+                        ]
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
         with tab_overall:
             st.dataframe(best[display_cols], use_container_width=True, hide_index=True)
         with tab_campaign:
@@ -518,6 +575,12 @@ def main():
         with tab_all:
             st.dataframe(all_actions, use_container_width=True, hide_index=True)
 
+        st.download_button(
+            "Baixar plano operacional (CSV)",
+            operational_plan.to_csv(index=False).encode("utf-8-sig"),
+            file_name="operational_action_plan.csv",
+            mime="text/csv",
+        )
         st.download_button(
             "Baixar melhores ações (CSV)",
             best.to_csv(index=False).encode("utf-8-sig"),
