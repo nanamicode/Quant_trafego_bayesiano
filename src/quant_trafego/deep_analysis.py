@@ -79,6 +79,7 @@ def run_deep_analysis(
     advi_steps: int = 40_000,
     seed: int = 42,
     output_dir: str | Path | None = None,
+    decision_entities: dict[str, set[str] | frozenset[str]] | None = None,
 ) -> DeepAnalysisResult:
     base_config = engine_config or EngineConfig(
         seed=seed
@@ -115,6 +116,7 @@ def run_deep_analysis(
     candidate_all, candidate_best = engine.run(
         clean,
         posterior_overrides=overrides,
+        decision_entities=decision_entities,
     )
     candidate_all = candidate_all.copy()
     candidate_best = candidate_best.copy()
@@ -130,7 +132,8 @@ def run_deep_analysis(
             base_config
         )
         all_actions, best_actions = final_engine.run(
-            clean
+            clean,
+            decision_entities=decision_entities,
         )
     elif guardrail != "none":
         if guardrail == "posterior_predictive_check_not_passed":
@@ -163,6 +166,7 @@ def run_deep_analysis(
         all_actions, best_actions = final_engine.run(
             clean,
             posterior_overrides=overrides,
+            decision_entities=decision_entities,
         )
     else:
         all_actions = candidate_all.copy()
