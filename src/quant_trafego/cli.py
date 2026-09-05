@@ -28,6 +28,11 @@ def main():
     parser.add_argument("--horizon-days", type=int, default=7)
     parser.add_argument("--draws", type=int, default=0, help="0 = automático pelo hardware.")
     parser.add_argument("--risk-aversion", type=float, default=0.25)
+    parser.add_argument(
+        "--temporal-model",
+        choices=["derivative", "state_space"],
+        default="derivative",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--include-inactive",
@@ -59,6 +64,7 @@ def main():
             draws=draws,
             risk_aversion=args.risk_aversion,
             seed=args.seed,
+            temporal_model=args.temporal_model,
         )
     engine = BayesTrafficEngine(config)
     all_actions, best = engine.run(df)
