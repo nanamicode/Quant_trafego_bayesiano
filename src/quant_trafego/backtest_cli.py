@@ -20,6 +20,11 @@ def main():
     parser.add_argument("--horizon-days", type=int, default=7)
     parser.add_argument("--min-train-days", type=int, default=21)
     parser.add_argument("--step-days", type=int, default=7)
+    parser.add_argument(
+        "--temporal-model",
+        choices=["derivative", "state_space"],
+        default="derivative",
+    )
     parser.add_argument("--draws", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--include-inactive", action="store_true")
@@ -37,6 +42,7 @@ def main():
         horizon_days=args.horizon_days,
         draws=draws,
         seed=args.seed,
+            temporal_model=args.temporal_model,
     )
 
     detail, summary = rolling_origin_backtest(
