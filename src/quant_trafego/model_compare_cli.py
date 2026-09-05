@@ -22,6 +22,11 @@ def main():
     parser.add_argument("--min-train-days", type=int, default=21)
     parser.add_argument("--step-days", type=int, default=7)
     parser.add_argument("--draws", type=int, default=0)
+    parser.add_argument(
+        "--disable-weekly-seasonality",
+        action="store_true",
+        help="Desativa o ajuste semanal encolhido de CTR/CVR.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--include-inactive", action="store_true")
     args = parser.parse_args()
