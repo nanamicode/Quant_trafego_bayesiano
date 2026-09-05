@@ -5,6 +5,7 @@ from dataclasses import replace
 import numpy as np
 import pandas as pd
 
+from .calibration import expected_calibration_error
 from .engine import BayesTrafficEngine, EngineConfig
 
 
@@ -183,9 +184,19 @@ def rolling_origin_backtest(
                     group["predicted_p_profit"].mean()
                     - (group["actual_profit"] > 0).mean()
                 ),
+                "profit_ece": expected_calibration_error(
+                    group["predicted_p_profit"].to_numpy(),
+                    (group["actual_profit"] > 0).to_numpy(dtype=float),
+                ),
                 "roas_event_calibration_gap": float(
                     group["predicted_p_roas_target"].mean()
                     - (group["actual_roas"] >= base_config.target_roas).mean()
+                ),
+                "roas_ece": expected_calibration_error(
+                    group["predicted_p_roas_target"].to_numpy(),
+                    (
+                        group["actual_roas"] >= base_config.target_roas
+                    ).to_numpy(dtype=float),
                 ),
                 "profit_90_coverage": float(group["profit_90_covered"].mean()),
                 "profit_90_mean_width": float(group["profit_90_width"].mean()),
