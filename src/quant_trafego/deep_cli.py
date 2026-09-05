@@ -45,6 +45,11 @@ def main():
     parser.add_argument("--target-accept", type=float, default=0.92)
     parser.add_argument("--advi-steps", type=int, default=40000)
     parser.add_argument("--method", choices=["auto", "nuts", "advi"], default="auto")
+    parser.add_argument(
+        "--disable-weekly-seasonality",
+        action="store_true",
+        help="Desativa o ajuste semanal encolhido de CTR/CVR.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--include-inactive", action="store_true")
     args = parser.parse_args()
@@ -76,6 +81,7 @@ def main():
             risk_aversion=args.risk_aversion,
             seed=args.seed,
             temporal_model=args.temporal_model,
+            use_weekly_seasonality=not args.disable_weekly_seasonality,
         )
 
     result = run_deep_analysis(
