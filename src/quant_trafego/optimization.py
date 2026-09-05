@@ -189,6 +189,8 @@ def optimize_campaign_allocation(
             result = secondary
 
     chosen = actions[np.asarray(result.x) > 0.5].copy()
+    chosen["parent_account_budget_limit"] = float(total_budget)
+    chosen["allocation_source"] = "account_capital_envelope"
     chosen = chosen.sort_values("entity_id").reset_index(drop=True)
 
     summary = {
