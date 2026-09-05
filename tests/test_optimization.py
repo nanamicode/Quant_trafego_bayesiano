@@ -2,6 +2,7 @@ import pandas as pd
 
 from quant_trafego.optimization import (
     AllocationConfig,
+    optimize_adset_allocation,
     optimize_campaign_allocation,
 )
 
@@ -106,3 +107,53 @@ def test_revenue_breaks_near_optimal_profit_tie():
     )
     assert selected.iloc[0]["action_multiplier"] == 1.2
     assert summary["expected_portfolio_revenue_additive"] == 900.0
+
+
+def test_adset_allocation_respects_selected_parent_campaign_budget():
+    rows = []
+    for adset, base in [("s1", 100.0), ("s2", 80.0)]:
+        for mult, spend, utility in [
+            (0.0, 0.0, 0.0),
+            (0.8, 80.0, base * 0.9),
+            (1.0, 100.0, base),
+            (1.2, 120.0, base * 1.15),
+        ]:
+            rows.append(
+                {
+                    "level": "adset",
+                    "campaign_id": "c1",
+                    "entity_id": adset,
+                    "action_multiplier": mult,
+                    "expected_spend": spend,
+                    "expected_profit": utility,
+                    "expected_revenue": utility * 3,
+                    "risk_adjusted_utility": utility,
+                    "p_profit": 0.9,
+                    "p_incremental_profit_positive": 0.8,
+                    "cvar10_profit": 10.0,
+                    "expected_regret": 3.0,
+                    "response_confidence": 0.3,
+                    "policy_eligible": True,
+                }
+            )
+
+    campaign_allocation = pd.DataFrame(
+        [
+            {
+                "level": "campaign",
+                "entity_id": "c1",
+                "expected_spend": 180.0,
+            }
+        ]
+    )
+
+    selected, summary = optimize_adset_allocation(
+        pd.DataFrame(rows),
+        campaign_allocation,
+    )
+    assert selected["entity_id"].nunique() == 2
+    assert selected["expected_spend"].sum() <= 180.0 + 1e-9
+    assert (
+        selected["parent_campaign_budget_limit"] == 180.0
+    ).all()
+    assert summary["campaigns"]["c1"]["selected_spend"] <= 180.0 + 1e-9
