@@ -9,7 +9,7 @@ from .engine import BayesTrafficEngine, EngineConfig
 from .funnel import hierarchical_funnel_diagnostics
 from .hardware import detect_hardware
 from .io import filter_active, load_ads_file
-from .optimization import optimize_campaign_allocation
+from .optimization import optimize_adset_allocation, optimize_campaign_allocation
 from .portfolio import optimize_campaign_portfolio
 from .quality import assess_data_quality
 from .report import write_reports
@@ -101,9 +101,24 @@ def main():
                 "portfolio_reason": str(portfolio_exc),
             }
 
+    adset_allocation = None
+    adset_allocation_summary = None
+    if allocation is not None:
+        try:
+            adset_allocation, adset_allocation_summary = optimize_adset_allocation(
+                all_actions,
+                allocation,
+            )
+        except Exception as adset_exc:
+            adset_allocation_summary = {
+                "status": "unavailable",
+                "reason": str(adset_exc),
+            }
+
     operational_plan = build_operational_action_plan(
         best,
         allocation=allocation,
+        adset_allocation=adset_allocation,
         source_df=df,
         horizon_days=config.horizon_days,
     )
@@ -126,6 +141,7 @@ def main():
             "quality_warnings": list(quality.warnings),
             "quality_report": asdict(quality),
             "allocation_summary": allocation_summary,
+            "adset_allocation_summary": adset_allocation_summary,
         },
     )
     write_run_manifest(manifest, args.output)
@@ -144,6 +160,11 @@ def main():
             **(
                 {"allocation": allocation}
                 if allocation is not None
+                else {}
+            ),
+            **(
+                {"adset_allocation": adset_allocation}
+                if adset_allocation is not None and not adset_allocation.empty
                 else {}
             ),
             **(
