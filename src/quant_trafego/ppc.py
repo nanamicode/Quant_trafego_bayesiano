@@ -33,22 +33,37 @@ def posterior_predictive_checks(
     draws: int = 2000,
     seed: int = 42,
 ) -> tuple[pd.DataFrame, PPCSummary]:
-    daily = (
-        df.groupby(
-            ["date", "campaign_id", "adset_id", "ad_id"],
-            as_index=False,
+    has_date = "date" in df.columns
+    if has_date:
+        daily = (
+            df.groupby(
+                ["date", "campaign_id", "adset_id", "ad_id"],
+                as_index=False,
+            )
+            .agg(
+                impressions=("impressions", "sum"),
+                clicks=("clicks", "sum"),
+                conversions=("conversions", "sum"),
+            )
+            .copy()
         )
-        .agg(
-            impressions=("impressions", "sum"),
-            clicks=("clicks", "sum"),
-            conversions=("conversions", "sum"),
+        daily["date"] = pd.to_datetime(daily["date"])
+        daily = daily.sort_values(
+            ["date", "campaign_id", "adset_id", "ad_id"]
+        ).reset_index(drop=True)
+    else:
+        daily = (
+            df.groupby(
+                ["campaign_id", "adset_id", "ad_id"],
+                as_index=False,
+            )
+            .agg(
+                impressions=("impressions", "sum"),
+                clicks=("clicks", "sum"),
+                conversions=("conversions", "sum"),
+            )
+            .copy()
         )
-        .copy()
-    )
-    daily["date"] = pd.to_datetime(daily["date"])
-    daily = daily.sort_values(
-        ["date", "campaign_id", "adset_id", "ad_id"]
-    ).reset_index(drop=True)
 
     rng = np.random.default_rng(seed)
     records: list[dict] = []
@@ -57,7 +72,7 @@ def posterior_predictive_checks(
         ctr_entity = idata.posterior["ctr_p_entity"]
         cvr_entity = idata.posterior["cvr_p_entity"]
         entity_size = ctr_entity.sizes.get("entity", -1)
-        use_entity = len(daily) == entity_size
+        use_entity = has_date and len(daily) == entity_size
     except Exception:
         ctr_entity = None
         cvr_entity = None
