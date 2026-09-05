@@ -5,6 +5,7 @@ import hashlib
 import numpy as np
 import pandas as pd
 
+from .dynamic import analyze_state_space_temporal
 from .model import BetaPosterior, aggregate, shrink_to, simulate_action, update_beta
 from .response import ResponseEstimate, estimate_response
 from .temporal import analyze_temporal
@@ -37,6 +38,7 @@ class EngineConfig:
     temporal_half_life_days: float = 14.0
     temporal_recent_days: int = 7
     use_temporal: bool = True
+    temporal_model: str = "derivative"
     use_empirical_response: bool = True
 
     global_ctr_strength: float = 2500
@@ -54,6 +56,8 @@ class BayesTrafficEngine:
         self.config = config or EngineConfig()
         if not 0.0 <= self.config.contribution_margin <= 1.0:
             raise ValueError("contribution_margin deve estar entre 0 e 1.")
+        if self.config.temporal_model not in {"derivative", "state_space"}:
+            raise ValueError("temporal_model deve ser derivative ou state_space.")
         self.rng = np.random.default_rng(self.config.seed)
 
     def validate(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -128,6 +132,27 @@ class BayesTrafficEngine:
         )
         return ctr, cvr
 
+    def _temporal_signal(self, df, level, entity_id):
+        seed = self.config.seed + self._stable_offset(level, str(entity_id))
+        if self.config.temporal_model == "state_space":
+            return analyze_state_space_temporal(
+                df,
+                recent_days=self.config.temporal_recent_days,
+                seed=seed,
+            )
+        return analyze_temporal(
+            df,
+            half_life_days=self.config.temporal_half_life_days,
+            recent_days=self.config.temporal_recent_days,
+            seed=seed,
+        )
+
+    @staticmethod
+    def _evidence_tier(response_estimate: ResponseEstimate) -> str:
+        if response_estimate.confidence >= 0.15:
+            return "observational_intervention"
+        return "predictive"
+
     def _evaluate_entity(
         self,
         level,
@@ -139,15 +164,7 @@ class BayesTrafficEngine:
         posterior_source: str,
     ):
         stats = aggregate(df)
-        temporal = analyze_temporal(
-            df,
-            half_life_days=self.config.temporal_half_life_days,
-            recent_days=self.config.temporal_recent_days,
-            seed=(
-                self.config.seed
-                + self._stable_offset(level, str(entity_id))
-            ),
-        )
+        temporal = self._temporal_signal(df, level, entity_id)
 
         ctr_mean = temporal.ctr.effective_mean if self.config.use_temporal else 0.0
         ctr_sd = temporal.ctr.effective_sd if self.config.use_temporal else 0.0
@@ -209,6 +226,8 @@ class BayesTrafficEngine:
                 "level": level,
                 "entity_id": str(entity_id),
                 "posterior_source": posterior_source,
+                "temporal_model": self.config.temporal_model,
+                "evidence_tier": self._evidence_tier(response_estimate),
                 "historical_days": stats["days"],
                 "historical_spend": stats["spend"],
                 "historical_revenue": stats["revenue"],
