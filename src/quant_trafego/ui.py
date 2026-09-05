@@ -76,8 +76,9 @@ def main():
             "Margem de contribuição (%)",
             min_value=0.0,
             max_value=100.0,
-            value=100.0,
+            value=0.0,
             step=1.0,
+            help="Obrigatória para calcular lucro econômico. Informe a margem real antes da mídia.",
         )
     with c6:
         risk_aversion = st.slider(
@@ -132,6 +133,13 @@ def main():
         return
 
     if not st.button("Executar análise quantitativa", type="primary", use_container_width=True):
+        return
+
+    if float(margin_pct) <= 0.0:
+        st.error(
+            "Informe uma margem de contribuição maior que 0%. "
+            "O motor não assume 100% de margem automaticamente."
+        )
         return
 
     try:
