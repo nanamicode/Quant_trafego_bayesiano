@@ -464,6 +464,10 @@ class BayesTrafficEngine:
             best["action_multiplier"]
             != best["unconstrained_best_multiplier"]
         )
+        best["policy_utility_gap"] = (
+            best["unconstrained_best_utility"]
+            - best["risk_adjusted_utility"]
+        )
 
         confidence = (
             0.40 * best["p_profit"]
