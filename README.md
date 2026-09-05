@@ -10,7 +10,7 @@ O objetivo é transformar planilhas históricas de mídia em inferência probabi
 
 ## Saída operacional principal
 
-A v0.9 transforma a inferência em um plano executável. A primeira saída a consultar é `operational_action_plan.csv`.
+A v0.9 transforma a inferência em um plano executável. A primeira saída a consultar é `operational_action_plan.csv`. O capital é reconciliado de cima para baixo: a ação da conta define o envelope total, o solver distribui entre campanhas e um segundo solver distribui cada campanha entre seus conjuntos.
 
 Ela responde por campanha, conjunto e anúncio:
 
