@@ -51,3 +51,13 @@ def test_predictive_evidence_caps_scale_up():
         config=AllocationConfig(predictive_max_multiplier=1.2),
     )
     assert (selected["action_multiplier"] <= 1.2).all()
+
+
+def test_optimizer_cannot_override_engine_policy_eligibility():
+    actions = _actions()
+    actions["policy_eligible"] = actions["action_multiplier"] <= 1.0
+    selected, _ = optimize_campaign_allocation(
+        actions,
+        total_budget=300.0,
+    )
+    assert (selected["action_multiplier"] <= 1.0).all()
