@@ -40,6 +40,7 @@ def test_deep_advi_daily_panel_smoke():
         draws=100,
         chains=2,
         seed=4,
+        include_global_time_effect=False,
         return_mapping=True,
     )
 
