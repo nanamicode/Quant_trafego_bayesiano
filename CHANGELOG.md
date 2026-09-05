@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.0
+
+- MCMC profundo migrado para painel diário;
+- efeito temporal global Bayesiano via GaussianRandomWalk;
+- posterior corrente por conta/campanha/conjunto/anúncio;
+- posterior predictive checks em observações diárias;
+- state-space Bayesiano rápido como candidato temporal;
+- promoção de modelo governada por rolling-origin backtesting;
+- Brier, ECE, reliability tables, cobertura e interval score;
+- recomendação oficial separada do ótimo irrestrito;
+- política de evidência limita scale-up sem sustentação suficiente;
+- MILP exato para alocação discreta;
+- portfólio com cenários correlacionados, cópula Gaussiana e CVaR;
+- diagnóstico probabilístico opcional de funil completo;
+- suporte a reach, frequency, LPV, ATC e checkout;
+- core CI e deep-smoke PyMC separados;
+- comandos de comparação de modelos e otimização.
+
 ## 0.6.0
 
 - runtime oficial fixado em Python 3.12;
