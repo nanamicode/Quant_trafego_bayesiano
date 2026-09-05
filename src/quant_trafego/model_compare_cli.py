@@ -45,6 +45,7 @@ def main():
             horizon_days=args.horizon_days,
             draws=draws,
             seed=args.seed,
+            use_weekly_seasonality=not args.disable_weekly_seasonality,
         ),
         min_train_days=args.min_train_days,
         horizon_days=args.horizon_days,
