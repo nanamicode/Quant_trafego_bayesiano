@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -533,3 +534,75 @@ def build_operational_action_plan(
         .reset_index(drop=True)
     )
     return plan
+
+
+
+def write_operational_action_plan(
+    plan: pd.DataFrame,
+    output_dir: str | Path,
+) -> None:
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    plan.to_csv(
+        out / "operational_action_plan.csv",
+        index=False,
+    )
+
+    if plan.empty:
+        (
+            out / "operational_action_plan.md"
+        ).write_text(
+            "# Plano operacional\n\nNenhuma ação disponível.\n",
+            encoding="utf-8",
+        )
+        return
+
+    lines = [
+        "# Plano operacional",
+        "",
+        "Este arquivo traduz a inferência quantitativa em ações executáveis.",
+        "",
+    ]
+    for action in [
+        "DESLIGAR",
+        "REDUZIR",
+        "REDUZIR_EXPOSICAO",
+        "AUMENTAR",
+        "PRIORIZAR_MAIS",
+        "MANTER",
+    ]:
+        subset = plan[
+            plan["capital_action"] == action
+        ]
+        if subset.empty:
+            continue
+
+        lines.append(f"## {action}")
+        lines.append("")
+        for _, row in subset.iterrows():
+            name = (
+                row.get("ad_name")
+                or row.get("adset_name")
+                or row.get("campaign_name")
+                or row.get("entity_id")
+            )
+            lines.append(
+                "- "
+                f"{row['level']} | {name} | "
+                f"{row['current_daily_amount']:.2f}/dia → "
+                f"{row['recommended_daily_amount']:.2f}/dia | "
+                f"Δ {row['daily_amount_change']:+.2f}/dia | "
+                f"Δ lucro esperado {row['expected_incremental_profit']:+.2f} | "
+                f"P(ganho incremental) "
+                f"{row['p_incremental_profit_positive']:.1%} | "
+                f"duplicação: {row['duplicate_action']}"
+            )
+        lines.append("")
+
+    (
+        out / "operational_action_plan.md"
+    ).write_text(
+        "\n".join(lines),
+        encoding="utf-8",
+    )
