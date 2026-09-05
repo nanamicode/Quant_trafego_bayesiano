@@ -251,34 +251,47 @@ def _recent_daily_spend_for_entity(
     )
 
 
+def _configured_daily_budget(
+    row: pd.Series,
+    source_df: pd.DataFrame | None,
+) -> float | None:
+    level = str(row["level"])
+    entity_id = str(row["entity_id"])
+    if level == "campaign":
+        return _latest_numeric_for_entity(
+            source_df,
+            level=level,
+            entity_id=entity_id,
+            column="campaign_daily_budget",
+        )
+    if level == "adset":
+        return _latest_numeric_for_entity(
+            source_df,
+            level=level,
+            entity_id=entity_id,
+            column="adset_daily_budget",
+        )
+    return None
+
+
 def _budget_reference(
     row: pd.Series,
     source_df: pd.DataFrame | None,
     *,
     recent_spend_days: int,
 ) -> tuple[float, str, bool]:
+    """
+    Operational baseline is actual recent delivery, not configured budget.
+
+    The model forecasts spend; a Meta budget can be much larger than delivered
+    spend and must not redefine what 1.0x means.
+    """
     level = str(row["level"])
     entity_id = str(row["entity_id"])
-
-    if level == "campaign":
-        budget = _latest_numeric_for_entity(
-            source_df,
-            level=level,
-            entity_id=entity_id,
-            column="campaign_daily_budget",
-        )
-        if budget is not None:
-            return budget, "campaign_daily_budget", True
-
-    if level == "adset":
-        budget = _latest_numeric_for_entity(
-            source_df,
-            level=level,
-            entity_id=entity_id,
-            column="adset_daily_budget",
-        )
-        if budget is not None:
-            return budget, "adset_daily_budget", True
+    configured_budget = _configured_daily_budget(
+        row,
+        source_df,
+    )
 
     recent_spend = _recent_daily_spend_for_entity(
         source_df,
@@ -294,7 +307,18 @@ def _budget_reference(
                 if level == "ad"
                 else f"recent_{int(recent_spend_days)}d_avg_daily_spend"
             ),
-            False,
+            configured_budget is not None,
+        )
+
+    if configured_budget is not None:
+        return (
+            configured_budget,
+            (
+                "campaign_daily_budget_fallback"
+                if level == "campaign"
+                else "adset_daily_budget_fallback"
+            ),
+            True,
         )
 
     historical_days = max(
@@ -322,15 +346,28 @@ def _campaign_operational_amounts(
     account_budget_target: dict | None,
     source_df: pd.DataFrame | None,
     recent_spend_days: int,
+    horizon_days: int,
 ) -> tuple[float, float, str, bool, bool, float]:
     current_daily, amount_basis, direct_budget = _budget_reference(
         row,
         source_df,
         recent_spend_days=recent_spend_days,
     )
+
+    expected_spend = max(
+        float(
+            row.get(
+                "expected_spend",
+                current_daily
+                * float(row["action_multiplier"])
+                * max(int(horizon_days), 1),
+            )
+        ),
+        0.0,
+    )
     recommended_daily = (
-        current_daily
-        * float(row["action_multiplier"])
+        expected_spend
+        / max(int(horizon_days), 1)
     )
     reconciled = False
     share = np.nan
@@ -351,29 +388,17 @@ def _campaign_operational_amounts(
         account_budget_target is not None
         and np.isfinite(parent_limit)
     ):
-        if parent_limit > 1e-9:
-            share = float(
+        share = (
+            float(
                 np.clip(
-                    float(
-                        row.get(
-                            "expected_spend",
-                            0.0,
-                        )
-                    )
+                    expected_spend
                     / float(parent_limit),
                     0.0,
                     1.0,
                 )
             )
-        else:
-            share = 0.0
-        recommended_daily = (
-            float(
-                account_budget_target[
-                    "recommended_daily_amount"
-                ]
-            )
-            * share
+            if parent_limit > 1e-9
+            else 0.0
         )
         reconciled = True
 
