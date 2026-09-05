@@ -18,6 +18,8 @@ class AllocationConfig:
     experiment_max_multiplier: float = 2.00
     max_total_downside_proxy: float | None = None
     time_limit_seconds: float = 30.0
+    revenue_tiebreak: bool = True
+    revenue_tiebreak_tolerance: float = 0.02
 
 
 def infer_evidence_tier(
@@ -142,8 +144,9 @@ def optimize_campaign_allocation(
         )
 
     objective = actions[cfg.objective_column].to_numpy(dtype=float)
+    primary_c = -objective
     result = milp(
-        c=-objective,
+        c=primary_c,
         integrality=np.ones(n, dtype=int),
         bounds=Bounds(np.zeros(n), np.ones(n)),
         constraints=constraints,
@@ -153,6 +156,37 @@ def optimize_campaign_allocation(
         raise RuntimeError(
             f"Otimização inteira não encontrou solução: {result.message}"
         )
+
+    primary_result = result
+    primary_optimum = float(result.fun)
+
+    if (
+        cfg.revenue_tiebreak
+        and "expected_revenue" in actions.columns
+        and cfg.revenue_tiebreak_tolerance >= 0
+    ):
+        allowed_deterioration = (
+            float(cfg.revenue_tiebreak_tolerance)
+            * max(abs(primary_optimum), 1.0)
+        )
+        secondary_constraints = [
+            *constraints,
+            LinearConstraint(
+                primary_c[None, :],
+                -np.inf,
+                primary_optimum + allowed_deterioration,
+            ),
+        ]
+        revenue_c = -actions["expected_revenue"].to_numpy(dtype=float)
+        secondary = milp(
+            c=revenue_c,
+            integrality=np.ones(n, dtype=int),
+            bounds=Bounds(np.zeros(n), np.ones(n)),
+            constraints=secondary_constraints,
+            options={"time_limit": cfg.time_limit_seconds},
+        )
+        if secondary.success and secondary.x is not None:
+            result = secondary
 
     chosen = actions[np.asarray(result.x) > 0.5].copy()
     chosen = chosen.sort_values("entity_id").reset_index(drop=True)
@@ -168,6 +202,12 @@ def optimize_campaign_allocation(
         "risk_adjusted_objective": float(
             chosen[cfg.objective_column].sum()
         ),
+        "primary_risk_objective_optimum": float(-primary_optimum),
+        "expected_portfolio_revenue_additive": float(
+            chosen["expected_revenue"].sum()
+        ) if "expected_revenue" in chosen.columns else None,
+        "revenue_tiebreak": bool(cfg.revenue_tiebreak),
+        "revenue_tiebreak_tolerance": float(cfg.revenue_tiebreak_tolerance),
         "additive_cvar10_proxy": float(
             chosen["cvar10_profit"].sum()
         ),
