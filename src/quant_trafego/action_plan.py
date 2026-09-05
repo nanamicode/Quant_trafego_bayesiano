@@ -316,9 +316,11 @@ def build_operational_action_plan(
 
     if allocation is not None and not allocation.empty:
         alloc = allocation.copy()
+        alloc["entity_id"] = alloc["entity_id"].astype(str)
         campaign_best = best[
             best["level"] == "campaign"
         ].copy()
+        campaign_best["entity_id"] = campaign_best["entity_id"].astype(str)
 
         # Keep columns computed only after best-action selection, while
         # replacing the selected campaign action and posterior metrics by the
