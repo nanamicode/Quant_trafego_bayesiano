@@ -4,7 +4,10 @@
 
 - camada operacional responde aumentar, reduzir, manter, desligar e candidatos a duplicação;
 - operational_action_plan.csv e operational_action_plan.md como saídas principais;
+- ação aprovada da conta define o envelope total de capital do horizonte;
 - alocação global de campanha substitui ótimo independente no plano operacional;
+- segundo MILP reconcilia conjuntos dentro do capital aprovado da campanha;
+- valores absolutos de campanha e conjunto são normalizados aos envelopes pais;
 - valores diários usam orçamento explícito quando disponível e spend recente como fallback;
 - campanha/conjunto/anúncio e respectivos nomes são preservados nas decisões;
 - lucro continua objetivo primário; faturamento desempata apenas soluções próximas do ótimo;
