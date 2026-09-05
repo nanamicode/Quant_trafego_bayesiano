@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from quant_trafego.engine import BayesTrafficEngine, EngineConfig
 from quant_trafego.model import BetaPosterior
@@ -62,3 +63,74 @@ def test_policy_distinguishes_unconstrained_and_approved_actions():
     assert (best["action_multiplier"] <= 1.0).all()
     assert "unconstrained_best_multiplier" in best.columns
     assert "policy_constrained" in best.columns
+
+
+def test_engine_rejects_non_numeric_core_values():
+    df = pd.read_csv("examples/example_data.csv").head(5).copy()
+    df.loc[df.index[0], "spend"] = "invalid-number"
+    engine = BayesTrafficEngine(EngineConfig(draws=100))
+    with pytest.raises(ValueError, match="não numéricos"):
+        engine.run(df)
+
+
+def test_low_quality_data_blocks_scale_up_policy():
+    rows = [
+        {
+            "date": "2026-01-01",
+            "campaign_id": "c1",
+            "adset_id": "s1",
+            "ad_id": "a1",
+            "impressions": 1000,
+            "clicks": 50,
+            "conversions": 5,
+            "spend": 100,
+            "revenue": 800,
+        },
+        {
+            "date": "2026-01-01",
+            "campaign_id": "c1",
+            "adset_id": "s1",
+            "ad_id": "a1",
+            "impressions": 1000,
+            "clicks": 50,
+            "conversions": 5,
+            "spend": 100,
+            "revenue": 800,
+        },
+        {
+            "date": "2026-01-02",
+            "campaign_id": "c1",
+            "adset_id": "s1",
+            "ad_id": "a1",
+            "impressions": 0,
+            "clicks": 0,
+            "conversions": 0,
+            "spend": 0,
+            "revenue": 0,
+        },
+        {
+            "date": "2026-01-03",
+            "campaign_id": "c1",
+            "adset_id": "s1",
+            "ad_id": "a1",
+            "impressions": 0,
+            "clicks": 0,
+            "conversions": 0,
+            "spend": 0,
+            "revenue": 0,
+        },
+    ]
+    engine = BayesTrafficEngine(
+        EngineConfig(
+            draws=200,
+            seed=5,
+        )
+    )
+    all_actions, best = engine.run(pd.DataFrame(rows))
+    assert float(best["data_quality_score"].iloc[0]) < 55.0
+    scale = all_actions["action_multiplier"] > 1.0
+    assert (~all_actions.loc[scale, "policy_eligible"]).all()
+    assert (
+        best["decision_confidence"]
+        <= best["decision_confidence_raw"]
+    ).all()
