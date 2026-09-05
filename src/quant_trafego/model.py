@@ -313,6 +313,10 @@ def sample_simulation_context(
     temporal_cvr_slope_sd: float = 0.0,
     response_elasticity_mean: float = 0.75,
     response_elasticity_sd: float = 0.25,
+    seasonal_ctr_shift_mean: float = 0.0,
+    seasonal_ctr_shift_sd: float = 0.0,
+    seasonal_cvr_shift_mean: float = 0.0,
+    seasonal_cvr_shift_sd: float = 0.0,
 ) -> SimulationContext:
     daily = stats["daily"]
     default_cpm = (
@@ -412,6 +416,48 @@ def sample_simulation_context(
             + cvr_shift
         )
 
+    if (
+        seasonal_ctr_shift_mean != 0.0
+        or seasonal_ctr_shift_sd != 0.0
+    ):
+        ctr_weekly_shift = rng.normal(
+            seasonal_ctr_shift_mean,
+            max(
+                seasonal_ctr_shift_sd,
+                1e-9,
+            ),
+            size=draws,
+        )
+        ctr = _sigmoid(
+            _logit(ctr)
+            + np.clip(
+                ctr_weekly_shift,
+                -1.0,
+                1.0,
+            )
+        )
+
+    if (
+        seasonal_cvr_shift_mean != 0.0
+        or seasonal_cvr_shift_sd != 0.0
+    ):
+        cvr_weekly_shift = rng.normal(
+            seasonal_cvr_shift_mean,
+            max(
+                seasonal_cvr_shift_sd,
+                1e-9,
+            ),
+            size=draws,
+        )
+        cvr = _sigmoid(
+            _logit(cvr)
+            + np.clip(
+                cvr_weekly_shift,
+                -1.0,
+                1.0,
+            )
+        )
+
     elasticity = rng.normal(
         response_elasticity_mean,
         max(
@@ -458,6 +504,10 @@ def simulate_action(
     response_elasticity_mean: float = 0.75,
     response_elasticity_sd: float = 0.25,
     response_confidence: float = 0.0,
+    seasonal_ctr_shift_mean: float = 0.0,
+    seasonal_ctr_shift_sd: float = 0.0,
+    seasonal_cvr_shift_mean: float = 0.0,
+    seasonal_cvr_shift_sd: float = 0.0,
     context: SimulationContext | None = None,
 ) -> dict:
     base_daily_spend = (
@@ -494,6 +544,10 @@ def simulate_action(
             temporal_cvr_slope_sd=temporal_cvr_slope_sd,
             response_elasticity_mean=response_elasticity_mean,
             response_elasticity_sd=response_elasticity_sd,
+            seasonal_ctr_shift_mean=seasonal_ctr_shift_mean,
+            seasonal_ctr_shift_sd=seasonal_ctr_shift_sd,
+            seasonal_cvr_shift_mean=seasonal_cvr_shift_mean,
+            seasonal_cvr_shift_sd=seasonal_cvr_shift_sd,
         )
     elif context.draws != draws:
         raise ValueError(
