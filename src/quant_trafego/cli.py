@@ -4,10 +4,13 @@ import argparse
 from dataclasses import asdict
 from pathlib import Path
 
+from .action_plan import build_operational_action_plan, write_operational_action_plan
 from .engine import BayesTrafficEngine, EngineConfig
 from .funnel import hierarchical_funnel_diagnostics
 from .hardware import detect_hardware
 from .io import filter_active, load_ads_file
+from .optimization import optimize_campaign_allocation
+from .portfolio import optimize_campaign_portfolio
 from .quality import assess_data_quality
 from .report import write_reports
 from .reproducibility import build_run_manifest, write_run_manifest
@@ -77,8 +80,36 @@ def main():
         )
     engine = BayesTrafficEngine(config)
     all_actions, best = engine.run(df)
+    allocation = None
+    allocation_summary = None
+    try:
+        allocation, allocation_summary = optimize_campaign_portfolio(
+            all_actions,
+            df,
+            contribution_margin=config.contribution_margin,
+        )
+    except Exception as portfolio_exc:
+        try:
+            allocation, allocation_summary = optimize_campaign_allocation(
+                all_actions
+            )
+            allocation_summary["fallback_reason"] = str(portfolio_exc)
+        except Exception as allocation_exc:
+            allocation_summary = {
+                "status": "unavailable",
+                "reason": str(allocation_exc),
+                "portfolio_reason": str(portfolio_exc),
+            }
+
+    operational_plan = build_operational_action_plan(
+        best,
+        allocation=allocation,
+        source_df=df,
+        horizon_days=config.horizon_days,
+    )
     funnel_detail = hierarchical_funnel_diagnostics(df)
     write_reports(all_actions, best, args.output)
+    write_operational_action_plan(operational_plan, args.output)
     if not funnel_detail.empty:
         funnel_detail.to_csv(
             Path(args.output) / "funnel_diagnostics.csv",
@@ -94,6 +125,7 @@ def main():
             "quality_score": quality.score,
             "quality_warnings": list(quality.warnings),
             "quality_report": asdict(quality),
+            "allocation_summary": allocation_summary,
         },
     )
     write_run_manifest(manifest, args.output)
@@ -103,13 +135,50 @@ def main():
         manifest,
         all_actions,
         best,
-        extra_tables=(
-            {"funnel_diagnostics": funnel_detail}
-            if not funnel_detail.empty
-            else None
-        ),
+        extra_tables={
+            **(
+                {"funnel_diagnostics": funnel_detail}
+                if not funnel_detail.empty
+                else {}
+            ),
+            **(
+                {"allocation": allocation}
+                if allocation is not None
+                else {}
+            ),
+            **(
+                {"operational_action_plan": operational_plan}
+                if not operational_plan.empty
+                else {}
+            ),
+        },
+        extra_json={
+            "allocation_summary": allocation_summary or {}
+        },
     )
     print(f"Run auditável: {run_dir}")
+
+    print("\nPLANO OPERACIONAL")
+    operational_cols = [
+        "level",
+        "campaign_name",
+        "adset_name",
+        "ad_name",
+        "capital_action",
+        "current_daily_amount",
+        "recommended_daily_amount",
+        "daily_amount_change",
+        "duplicate_action",
+        "expected_incremental_profit",
+        "expected_incremental_revenue",
+        "p_incremental_profit_positive",
+    ]
+    print(
+        operational_plan[operational_cols].to_string(index=False)
+        if not operational_plan.empty
+        else "Nenhuma ação operacional disponível."
+    )
+    print()
 
     cols = [
         "level",
