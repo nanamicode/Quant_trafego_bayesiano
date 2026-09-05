@@ -58,6 +58,8 @@ def aggregate(df: pd.DataFrame) -> dict:
             spend=("spend", "sum"),
             revenue=("revenue", "sum"),
         )
+        .sort_values("date")
+        .reset_index(drop=True)
     )
 
     daily["cpm"] = np.where(
@@ -98,9 +100,19 @@ def _lognormal_params(values: np.ndarray, default_mean: float, default_cv: float
         return float(logs.mean()), float(max(logs.std(ddof=1), 0.05))
 
     mean = max(float(default_mean), 1e-6)
-    sigma = float(np.sqrt(np.log(1.0 + default_cv ** 2)))
-    mu = float(np.log(mean) - 0.5 * sigma ** 2)
+    sigma = float(np.sqrt(np.log(1.0 + default_cv**2)))
+    mu = float(np.log(mean) - 0.5 * sigma**2)
     return mu, sigma
+
+
+def _logit(p: np.ndarray) -> np.ndarray:
+    p = np.clip(p, 1e-8, 1 - 1e-8)
+    return np.log(p / (1 - p))
+
+
+def _sigmoid(x: np.ndarray) -> np.ndarray:
+    x = np.clip(x, -30.0, 30.0)
+    return 1.0 / (1.0 + np.exp(-x))
 
 
 def hill_efficiency(multiplier: float, half: float = 1.5, slope: float = 1.3) -> float:
@@ -109,7 +121,7 @@ def hill_efficiency(multiplier: float, half: float = 1.5, slope: float = 1.3) ->
         return 0.0
 
     def hill(x: float) -> float:
-        return (x ** slope) / (half ** slope + x ** slope)
+        return (x**slope) / (half**slope + x**slope)
 
     response_ratio = hill(m) / hill(1.0)
     return response_ratio / m
@@ -128,6 +140,13 @@ def simulate_action(
     rng: np.random.Generator,
     saturation_half: float = 1.5,
     saturation_slope: float = 1.3,
+    temporal_ctr_slope_mean: float = 0.0,
+    temporal_ctr_slope_sd: float = 0.0,
+    temporal_cvr_slope_mean: float = 0.0,
+    temporal_cvr_slope_sd: float = 0.0,
+    response_elasticity_mean: float = 0.75,
+    response_elasticity_sd: float = 0.25,
+    response_confidence: float = 0.0,
 ) -> dict:
     base_daily_spend = stats["spend"] / max(stats["days"], 1)
     spend = float(base_daily_spend * horizon_days * multiplier)
@@ -147,12 +166,58 @@ def simulate_action(
 
         cpm = rng.lognormal(cpm_mu, cpm_sigma, size=draws)
         aov = rng.lognormal(aov_mu, aov_sigma, size=draws)
-        impressions = np.maximum(np.round((spend / np.maximum(cpm, 1e-6)) * 1000), 0).astype(int)
+        impressions = np.maximum(
+            np.round((spend / np.maximum(cpm, 1e-6)) * 1000),
+            0,
+        ).astype(int)
 
         ctr = ctr_post.sample(rng, draws)
         cvr = cvr_post.sample(rng, draws)
 
-        eff = hill_efficiency(multiplier, saturation_half, saturation_slope)
+        # Forecast the average rate over the future horizon. Trends are on the
+        # logit scale and have already been confidence-shrunk upstream.
+        avg_future_day = (horizon_days + 1.0) / 2.0
+        if temporal_ctr_slope_mean != 0.0 or temporal_ctr_slope_sd != 0.0:
+            ctr_slope = rng.normal(
+                temporal_ctr_slope_mean,
+                max(temporal_ctr_slope_sd, 1e-9),
+                size=draws,
+            )
+            ctr_shift = np.clip(ctr_slope * avg_future_day, -1.5, 1.5)
+            ctr = _sigmoid(_logit(ctr) + ctr_shift)
+
+        if temporal_cvr_slope_mean != 0.0 or temporal_cvr_slope_sd != 0.0:
+            cvr_slope = rng.normal(
+                temporal_cvr_slope_mean,
+                max(temporal_cvr_slope_sd, 1e-9),
+                size=draws,
+            )
+            cvr_shift = np.clip(cvr_slope * avg_future_day, -1.5, 1.5)
+            cvr = _sigmoid(_logit(cvr) + cvr_shift)
+
+        fixed_eff = max(
+            hill_efficiency(multiplier, saturation_half, saturation_slope),
+            1e-6,
+        )
+
+        response_confidence = float(np.clip(response_confidence, 0.0, 1.0))
+        if response_confidence > 0:
+            elasticity = rng.normal(
+                response_elasticity_mean,
+                max(response_elasticity_sd, 1e-6),
+                size=draws,
+            )
+            elasticity = np.clip(elasticity, 0.05, 1.50)
+            empirical_eff = np.power(max(multiplier, 1e-6), elasticity - 1.0)
+            # Geometric blending is stable because both terms are positive.
+            eff = np.exp(
+                (1.0 - response_confidence) * np.log(fixed_eff)
+                + response_confidence * np.log(np.clip(empirical_eff, 1e-6, 10.0))
+            )
+            eff = np.clip(eff, 0.25, 2.50)
+        else:
+            eff = fixed_eff
+
         cvr_scaled = np.clip(cvr * eff, 1e-9, 1 - 1e-9)
 
         clicks = rng.binomial(impressions, ctr)
