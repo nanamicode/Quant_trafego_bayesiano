@@ -80,6 +80,13 @@ def optimize_campaign_allocation(
             >= cfg.min_p_incremental_for_scale
         )
     )
+    if "policy_eligible" in actions.columns:
+        eligible &= (
+            actions["policy_eligible"]
+            .fillna(False)
+            .astype(bool)
+        )
+
     actions = actions[eligible].copy().reset_index(drop=True)
 
     campaigns = actions["entity_id"].astype(str).unique().tolist()
