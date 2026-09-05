@@ -78,3 +78,37 @@ Cada execução deve produzir hash canônico dos dados, configuração integral,
 Uma técnica nova só vira padrão se melhorar score probabilístico e/ou calibração fora da amostra, não degradar materialmente a estabilidade, não introduzir custo computacional desproporcional e passar testes/diagnósticos em múltiplas origens temporais.
 
 Complexidade matemática sem ganho fora da amostra não conta como avanço.
+
+## Contrafactuais pareados
+
+Decisão: ações alternativas da mesma entidade devem ser comparadas sobre os mesmos draws latentes de CPM, AOV, CTR, CVR, elasticidade e tendência. O ruído de observação continua sendo simulado para risco realizado, mas a comparação entre intervenções usa lucro condicional pareado. Isso reduz a chance de puro ruído binomial determinar P(ação ótima), P(ação > manter) e expected regret.
+
+Seeds de contexto e ação são derivados deterministicamente de nível, entidade e multiplicador. Reordenar a grade de ações não deve mudar o resultado.
+
+## Sazonalidade semanal
+
+CTR e CVR podem apresentar estrutura por dia da semana. A camada rápida estima efeitos semanais no espaço logit, controlando tendência suave e aplicando shrinkage. O efeito é zerado quando histórico/cobertura são insuficientes.
+
+Para posterior Empirical Bayes agregado, o forecast usa dias futuros menos o mix histórico de weekdays. Para posterior MCMC de estado corrente, usa dias futuros menos o weekday do último estado, evitando dupla contagem.
+
+## Integridade e governança da decisão
+
+Data quality é uma camada de política, não uma alteração arbitrária do posterior. Gaps de calendário, tracking inválido, pouca densidade, baixa sobreposição entre campanhas e outros problemas reduzem o score decisório e podem impedir aumento de exposição.
+
+decision_score é um composto heurístico entre 0 e 1 e não deve ser apresentado como probabilidade calibrada. As probabilidades formais permanecem métricas como P(lucro), P(ROAS alvo), P(ação > manter) e P(ação ótima), condicionais ao modelo e aos dados.
+
+## Guardrails da inferência profunda
+
+- NUTS com diagnóstico de convergência reprovado não dirige capital; a decisão volta ao Empirical Bayes e o posterior profundo fica disponível para diagnóstico.
+- PPC reprovado/insuficiente permite inspeção do posterior, mas bloqueia scale-up.
+- ADVI é aproximação variacional. Mesmo com PPC aprovado, recebe cap conservador de scale por padrão até que comparação específica das caudas contra NUTS sustente relaxamento.
+
+## Risco de portfólio
+
+Correlação entre campanhas é encolhida par a par pela quantidade real de dias de coexistência. O número total de dias da conta não serve como substituto de overlap de cada dupla.
+
+O otimizador recebe policy_eligible do motor como restrição dura. Otimização matemática nunca pode reabrir uma ação vetada por qualidade, diagnóstico profundo ou política de evidência.
+
+## Interpretação da resposta ao gasto
+
+A regressão observacional de gasto controla tendência linear/quadrática e, quando há cobertura suficiente, weekday. A confiança depende da variação residual de log(gasto) depois desses controles. Isso reduz confundimento óbvio, mas não transforma associação observacional em causalidade.
