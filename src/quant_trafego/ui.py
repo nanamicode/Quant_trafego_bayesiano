@@ -349,6 +349,8 @@ def main():
             "entity_id",
             "posterior_source",
             "action_multiplier",
+            "unconstrained_best_multiplier",
+            "policy_constrained",
             "historical_spend",
             "historical_roas",
             "expected_profit",
