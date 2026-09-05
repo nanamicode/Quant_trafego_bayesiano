@@ -769,6 +769,51 @@ def build_operational_action_plan(
         for _, row in adset_rows.iterrows()
     }
 
+    def selected_expected_spend(row: pd.Series) -> float:
+        value = pd.to_numeric(
+            pd.Series(
+                [row.get("expected_spend", np.nan)]
+            ),
+            errors="coerce",
+        ).iloc[0]
+        if np.isfinite(value):
+            return max(float(value), 0.0)
+
+        current_daily, _, _ = _budget_reference(
+            row,
+            source_df,
+            recent_spend_days=cfg.recent_spend_days,
+        )
+        return (
+            max(float(current_daily), 0.0)
+            * max(float(row["action_multiplier"]), 0.0)
+            * max(int(horizon_days), 1)
+        )
+
+    if not campaign_rows.empty:
+        campaign_rows["selected_expected_spend"] = (
+            campaign_rows.apply(
+                selected_expected_spend,
+                axis=1,
+            )
+        )
+    else:
+        campaign_rows["selected_expected_spend"] = pd.Series(
+            dtype=float
+        )
+
+    if not adset_rows.empty:
+        adset_rows["selected_expected_spend"] = (
+            adset_rows.apply(
+                selected_expected_spend,
+                axis=1,
+            )
+        )
+    else:
+        adset_rows["selected_expected_spend"] = pd.Series(
+            dtype=float
+        )
+
     account_capital_ceiling_daily = (
         float(
             account_budget_target[
@@ -779,7 +824,7 @@ def build_operational_action_plan(
         else np.nan
     )
     account_deployed_daily = float(
-        campaign_rows["expected_spend"].fillna(0.0).sum()
+        campaign_rows["selected_expected_spend"].fillna(0.0).sum()
         / max(int(horizon_days), 1)
     )
     account_unallocated_daily = (
@@ -796,7 +841,7 @@ def build_operational_action_plan(
 
     campaign_selected_horizon_spend = {
         str(row["entity_id"]): max(
-            float(row.get("expected_spend", 0.0)),
+            float(row.get("selected_expected_spend", 0.0)),
             0.0,
         )
         for _, row in campaign_rows.iterrows()
@@ -808,7 +853,7 @@ def build_operational_action_plan(
             ].astype(str)
         )
         .groupby("campaign_id")[
-            "expected_spend"
+            "selected_expected_spend"
         ]
         .sum()
         .to_dict()
