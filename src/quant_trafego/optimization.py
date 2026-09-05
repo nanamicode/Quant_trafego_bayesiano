@@ -12,6 +12,7 @@ from scipy.sparse import lil_matrix
 class AllocationConfig:
     objective_column: str = "risk_adjusted_utility"
     min_p_profit_for_scale: float = 0.60
+    min_p_incremental_for_scale: float = 0.55
     predictive_max_multiplier: float = 1.20
     observational_max_multiplier: float = 1.50
     experiment_max_multiplier: float = 2.00
@@ -54,6 +55,7 @@ def optimize_campaign_allocation(
     if actions.empty:
         raise ValueError("Não há ações de campanha para otimizar.")
 
+    original_campaigns = actions["entity_id"].astype(str).unique().tolist()
     evidence_overrides = evidence_overrides or {}
     actions["evidence_tier"] = actions.apply(
         lambda row: infer_evidence_tier(
@@ -72,7 +74,11 @@ def optimize_campaign_allocation(
     )
     scale = actions["action_multiplier"] > 1.0
     eligible &= (~scale) | (
-        actions["p_profit"] >= cfg.min_p_profit_for_scale
+        (actions["p_profit"] >= cfg.min_p_profit_for_scale)
+        & (
+            actions["p_incremental_profit_positive"]
+            >= cfg.min_p_incremental_for_scale
+        )
     )
     actions = actions[eligible].copy().reset_index(drop=True)
 
@@ -80,11 +86,12 @@ def optimize_campaign_allocation(
     if not campaigns:
         raise ValueError("Nenhuma ação elegível após restrições de evidência.")
 
-    for campaign in campaigns:
-        if not (
-            actions["entity_id"].astype(str) == campaign
-        ).any():
-            raise ValueError(f"Campanha sem ação elegível: {campaign}")
+    missing_campaigns = sorted(set(original_campaigns) - set(campaigns))
+    if missing_campaigns:
+        raise ValueError(
+            "Campanhas ficaram sem ação elegível: "
+            + ", ".join(missing_campaigns)
+        )
 
     if total_budget is None:
         holds = actions[np.isclose(actions["action_multiplier"], 1.0)]
