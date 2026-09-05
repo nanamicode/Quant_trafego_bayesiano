@@ -15,6 +15,7 @@ class OperationalPlanConfig:
     duplicate_min_p_incremental: float = 0.70
     duplicate_min_p_beats_hold: float = 0.65
     duplicate_min_response_confidence: float = 0.15
+    recent_spend_days: int = 7
 
 
 def _latest_numeric_for_entity(
@@ -167,9 +168,71 @@ def _duplicate_decision(
     )
 
 
+def _recent_daily_spend_for_entity(
+    df: pd.DataFrame | None,
+    *,
+    level: str,
+    entity_id: str,
+    recent_days: int,
+) -> float | None:
+    if (
+        df is None
+        or "spend" not in df.columns
+        or "date" not in df.columns
+    ):
+        return None
+
+    id_col = {
+        "campaign": "campaign_id",
+        "adset": "adset_id",
+        "ad": "ad_id",
+    }.get(level)
+    if id_col is None or id_col not in df.columns:
+        return None
+
+    subset = df[
+        df[id_col].astype(str) == str(entity_id)
+    ].copy()
+    if subset.empty:
+        return None
+
+    subset["date"] = pd.to_datetime(
+        subset["date"],
+        errors="coerce",
+    )
+    subset["spend"] = pd.to_numeric(
+        subset["spend"],
+        errors="coerce",
+    )
+    subset = subset.dropna(
+        subset=["date", "spend"]
+    )
+    if subset.empty:
+        return None
+
+    daily = (
+        subset.groupby(
+            "date",
+            as_index=False,
+        )["spend"]
+        .sum()
+        .sort_values("date")
+    )
+    daily = daily.tail(
+        max(int(recent_days), 1)
+    )
+    if daily.empty:
+        return None
+    return float(
+        daily["spend"].mean()
+    )
+
+
 def _budget_reference(
     row: pd.Series,
     source_df: pd.DataFrame | None,
+    *,
+    recent_spend_days: int,
 ) -> tuple[float, str, bool]:
     level = str(row["level"])
     entity_id = str(row["entity_id"])
@@ -194,6 +257,23 @@ def _budget_reference(
         if budget is not None:
             return budget, "adset_daily_budget", True
 
+    recent_spend = _recent_daily_spend_for_entity(
+        source_df,
+        level=level,
+        entity_id=entity_id,
+        recent_days=recent_spend_days,
+    )
+    if recent_spend is not None:
+        return (
+            recent_spend,
+            (
+                f"recent_{int(recent_spend_days)}d_attributed_daily_spend"
+                if level == "ad"
+                else f"recent_{int(recent_spend_days)}d_avg_daily_spend"
+            ),
+            False,
+        )
+
     historical_days = max(
         float(row.get("historical_days", 1.0)),
         1.0,
@@ -205,9 +285,9 @@ def _budget_reference(
     return (
         historical_spend / historical_days,
         (
-            "attributed_avg_daily_spend"
+            "historical_attributed_avg_daily_spend"
             if level == "ad"
-            else "avg_daily_spend"
+            else "historical_avg_daily_spend"
         ),
         False,
     )
@@ -301,6 +381,7 @@ def build_operational_action_plan(
             _budget_reference(
                 row,
                 source_df,
+                recent_spend_days=cfg.recent_spend_days,
             )
         )
 
