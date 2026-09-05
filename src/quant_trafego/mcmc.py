@@ -241,13 +241,12 @@ def fit_hierarchical_funnel(
                     f"{prefix}_sigma_time",
                     sigma=0.12,
                 )
-                z_time = pm.Normal(
-                    f"{prefix}_z_time",
-                    0,
-                    1,
+                raw_time = pm.GaussianRandomWalk(
+                    f"{prefix}_time_raw",
+                    sigma=sigma_time,
+                    init_dist=pm.Normal.dist(0.0, 0.10),
                     dims="date",
                 )
-                raw_time = sigma_time * pt.cumsum(z_time)
                 centered_time = raw_time - pt.mean(raw_time)
                 time_effect = pm.Deterministic(
                     f"{prefix}_time_effect",
