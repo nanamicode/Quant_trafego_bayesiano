@@ -8,7 +8,7 @@ from .deep_analysis import run_deep_analysis
 from .engine import EngineConfig
 from .funnel import hierarchical_funnel_diagnostics
 from .hardware import detect_hardware
-from .io import filter_active, load_ads_file
+from .io import filter_decision_rows, infer_decision_universe, load_ads_file
 from .optimization import optimize_adset_allocation, optimize_campaign_allocation
 from .portfolio import optimize_campaign_portfolio
 from .quality import assess_data_quality
@@ -58,10 +58,28 @@ def main():
     args = parser.parse_args()
 
     df = load_ads_file(args.input)
+    decision_entities = None
+    operational_df = df
     if not args.include_inactive:
-        df = filter_active(df)
+        universe = infer_decision_universe(df)
+        decision_entities = {
+            "campaign": universe.campaign_ids,
+            "adset": universe.adset_ids,
+            "ad": universe.ad_ids,
+        }
+        operational_df = filter_decision_rows(
+            df,
+            universe,
+        )
+        print(
+            "Contexto completo preservado | "
+            f"ativos detectados por {universe.detection_method}: "
+            f"{len(universe.campaign_ids)} campanhas, "
+            f"{len(universe.adset_ids)} conjuntos, "
+            f"{len(universe.ad_ids)} anúncios."
+        )
 
-    quality = assess_data_quality(df)
+    quality = assess_data_quality(operational_df)
     funnel_detail = hierarchical_funnel_diagnostics(df)
     hw = detect_hardware()
     chains = args.chains or hw.recommended_mcmc_chains
@@ -99,11 +117,12 @@ def main():
         advi_steps=args.advi_steps,
         seed=args.seed,
         output_dir=args.output,
+        decision_entities=decision_entities,
     )
 
     account_budget_target = derive_account_budget_target(
         result.best_actions,
-        source_df=df,
+        source_df=operational_df,
         horizon_days=config.horizon_days,
     )
     allocation = None
