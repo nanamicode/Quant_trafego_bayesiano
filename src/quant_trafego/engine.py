@@ -125,6 +125,47 @@ class BayesTrafficEngine:
         return out
 
     @staticmethod
+    def _entity_context(level: str, entity_id: str, df: pd.DataFrame) -> dict:
+        def first_value(column: str):
+            if column not in df.columns:
+                return None
+            values = df[column].dropna()
+            if values.empty:
+                return None
+            return str(values.iloc[-1])
+
+        context = {
+            "campaign_id": first_value("campaign_id"),
+            "campaign_name": first_value("campaign_name"),
+            "adset_id": first_value("adset_id"),
+            "adset_name": first_value("adset_name"),
+            "ad_id": first_value("ad_id"),
+            "ad_name": first_value("ad_name"),
+        }
+        if level == "account":
+            context.update(
+                campaign_id=None,
+                campaign_name=None,
+                adset_id=None,
+                adset_name=None,
+                ad_id=None,
+                ad_name=None,
+            )
+        elif level == "campaign":
+            context["campaign_id"] = str(entity_id)
+            context["adset_id"] = None
+            context["adset_name"] = None
+            context["ad_id"] = None
+            context["ad_name"] = None
+        elif level == "adset":
+            context["adset_id"] = str(entity_id)
+            context["ad_id"] = None
+            context["ad_name"] = None
+        elif level == "ad":
+            context["ad_id"] = str(entity_id)
+        return context
+
+    @staticmethod
     def _stable_offset(level: str, entity_id: str) -> int:
         digest = hashlib.blake2b(
             f"{level}|{entity_id}".encode("utf-8"),
@@ -210,6 +251,7 @@ class BayesTrafficEngine:
         posterior_source: str,
     ):
         stats = aggregate(df)
+        entity_context = self._entity_context(level, entity_id, df)
         temporal = self._temporal_signal(df, level, entity_id)
 
         if self.config.use_weekly_seasonality:
@@ -312,6 +354,8 @@ class BayesTrafficEngine:
 
         hold = next(x for x in sims if x["multiplier"] == 1.0)
         hold_draws = hold["_decision_profit_draws"]
+        hold_expected_revenue = float(hold["expected_revenue"])
+        hold_expected_profit = float(hold["expected_profit"])
         profit_matrix = np.vstack(
             [x["_decision_profit_draws"] for x in sims]
         )
@@ -346,6 +390,7 @@ class BayesTrafficEngine:
             rows.append({
                 "level": level,
                 "entity_id": str(entity_id),
+                **entity_context,
                 "posterior_source": posterior_source,
                 "temporal_model": self.config.temporal_model,
                 "evidence_tier": self._evidence_tier(response_estimate),
@@ -406,7 +451,12 @@ class BayesTrafficEngine:
                     )
                 ),
                 "p_action_optimal": float(np.mean(best_idx == i)),
+                "expected_hold_profit": hold_expected_profit,
+                "expected_hold_revenue": hold_expected_revenue,
                 "expected_incremental_profit_vs_hold": float(np.mean(incremental)),
+                "expected_incremental_revenue_vs_hold": float(
+                    sim["expected_revenue"] - hold_expected_revenue
+                ),
                 "p_incremental_profit_positive": float(np.mean(incremental > 0)),
                 "var10_profit": sim["var10_profit"],
                 "cvar10_profit": sim["cvar10_profit"],
