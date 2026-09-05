@@ -34,8 +34,8 @@ def main():
     hw = detect_hardware()
     ram = f"{hw.ram_gb:.1f} GB" if hw.ram_gb is not None else "não detectada"
     st.info(
-        f"Hardware detectado: {hw.cpu_threads} threads de CPU | RAM {ram} | "
-        f"perfil {hw.label} | Monte Carlo automático: {hw.recommended_draws:,} amostras."
+        f"Hardware: {hw.cpu_threads} threads | RAM {ram} | perfil {hw.label} | "
+        f"Monte Carlo automático {hw.recommended_draws:,}."
     )
 
     uploaded = st.file_uploader(
@@ -45,23 +45,28 @@ def main():
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        depth = st.selectbox("Profundidade Monte Carlo", list(DEPTHS), index=0)
+        inference_mode = st.selectbox(
+            "Motor de inferência",
+            ["Hierárquico rápido", "MCMC hierárquico profundo"],
+            index=0,
+        )
     with c2:
-        horizon_days = st.number_input("Horizonte futuro (dias)", 1, 90, 7)
+        depth = st.selectbox("Monte Carlo", list(DEPTHS), index=0)
     with c3:
-        target_roas = st.number_input("ROAS alvo", min_value=0.0, value=2.0, step=0.1)
+        horizon_days = st.number_input("Horizonte futuro (dias)", 1, 90, 7)
     with c4:
+        target_roas = st.number_input("ROAS alvo", min_value=0.0, value=2.0, step=0.1)
+
+    c5, c6, c7 = st.columns(3)
+    with c5:
         margin_pct = st.number_input(
             "Margem de contribuição (%)",
             min_value=0.0,
             max_value=100.0,
             value=100.0,
             step=1.0,
-            help="Margem antes da mídia. Ex.: 40 significa lucro = receita × 40% − mídia.",
         )
-
-    c5, c6 = st.columns(2)
-    with c5:
+    with c6:
         risk_aversion = st.slider(
             "Aversão a risco",
             min_value=0.0,
@@ -69,8 +74,37 @@ def main():
             value=0.25,
             step=0.05,
         )
-    with c6:
+    with c7:
         include_inactive = st.checkbox("Incluir entidades inativas", value=False)
+
+    mcmc_method = "auto"
+    mcmc_draws = 1200
+    mcmc_tune = 1200
+    if inference_mode == "MCMC hierárquico profundo":
+        with st.expander("Configuração MCMC", expanded=True):
+            st.warning(
+                "Esse modo pode consumir bastante CPU/RAM. Instale as dependências uma vez "
+                "com install_deep_windows.bat."
+            )
+            d1, d2, d3 = st.columns(3)
+            with d1:
+                mcmc_method = st.selectbox("Método", ["auto", "nuts", "advi"], index=0)
+            with d2:
+                mcmc_draws = st.number_input(
+                    "Amostras posteriores",
+                    min_value=400,
+                    max_value=10000,
+                    value=1200,
+                    step=200,
+                )
+            with d3:
+                mcmc_tune = st.number_input(
+                    "Amostras de adaptação",
+                    min_value=400,
+                    max_value=10000,
+                    value=1200,
+                    step=200,
+                )
 
     if not uploaded:
         st.info("Envie um CSV ou XLSX para começar.")
@@ -95,29 +129,70 @@ def main():
             st.write(
                 f"Base: {quality.rows:,} linhas | {quality.days} dias | "
                 f"{quality.campaigns} campanhas | {quality.adsets} conjuntos | "
-                f"{quality.ads} anúncios | qualidade estrutural {quality.score:.0f}/100."
+                f"{quality.ads} anúncios | qualidade {quality.score:.0f}/100."
             )
             for warning in quality.warnings:
                 st.warning(warning)
 
             draws = DEPTHS[depth] or hw.recommended_draws
-            st.write(f"Monte Carlo: {draws:,} amostras por ação/entidade.")
-            st.write(
-                "Estimando posteriores hierárquicos, derivadas temporais, "
-                "mudança de regime e resposta observacional ao gasto..."
+            config = EngineConfig(
+                target_roas=float(target_roas),
+                contribution_margin=float(margin_pct) / 100.0,
+                horizon_days=int(horizon_days),
+                draws=int(draws),
+                risk_aversion=float(risk_aversion),
             )
 
-            engine = BayesTrafficEngine(
-                EngineConfig(
-                    target_roas=float(target_roas),
-                    contribution_margin=float(margin_pct) / 100.0,
-                    horizon_days=int(horizon_days),
-                    draws=int(draws),
-                    risk_aversion=float(risk_aversion),
+            diagnostics = None
+            if inference_mode == "MCMC hierárquico profundo":
+                st.write(
+                    "Ajustando posterior hierárquico completo e conectando-o "
+                    "à árvore de decisões..."
                 )
-            )
-            all_actions, best = engine.run(df)
+                from quant_trafego.deep_analysis import run_deep_analysis
+
+                result = run_deep_analysis(
+                    df,
+                    engine_config=config,
+                    mcmc_draws=int(mcmc_draws),
+                    mcmc_tune=int(mcmc_tune),
+                    mcmc_chains=hw.recommended_mcmc_chains,
+                    mcmc_cores=hw.recommended_mcmc_cores,
+                    mcmc_method=mcmc_method,
+                )
+                all_actions = result.all_actions
+                best = result.best_actions
+                diagnostics = result.diagnostics
+            else:
+                st.write(
+                    "Estimando posteriores hierárquicos, derivadas temporais, "
+                    "regime e resposta observacional ao gasto..."
+                )
+                engine = BayesTrafficEngine(config)
+                all_actions, best = engine.run(df)
+
             status.update(label="Análise concluída.", state="complete", expanded=False)
+
+        if diagnostics is not None:
+            st.subheader("Diagnóstico MCMC")
+            d1, d2, d3, d4 = st.columns(4)
+            d1.metric("Método", diagnostics.method.upper())
+            d2.metric(
+                "R-hat máx.",
+                "n/a" if diagnostics.max_rhat is None else f"{diagnostics.max_rhat:.3f}",
+            )
+            d3.metric(
+                "ESS bulk mín.",
+                "n/a" if diagnostics.min_ess_bulk is None else f"{diagnostics.min_ess_bulk:.0f}",
+            )
+            d4.metric(
+                "Divergências",
+                "n/a" if diagnostics.divergences is None else str(diagnostics.divergences),
+            )
+            if diagnostics.converged is False:
+                st.error("O NUTS não atingiu todos os critérios de convergência definidos.")
+            elif diagnostics.converged is True:
+                st.success("Diagnósticos principais de convergência aprovados.")
 
         account = best[best["level"] == "account"]
         st.subheader("Visão geral")
@@ -139,6 +214,7 @@ def main():
         display_cols = [
             "level",
             "entity_id",
+            "posterior_source",
             "action_multiplier",
             "historical_spend",
             "historical_roas",
@@ -163,7 +239,6 @@ def main():
         tab_overall, tab_campaign, tab_adset, tab_ad, tab_all = st.tabs(
             ["Decisões", "Campanhas", "Conjuntos", "Anúncios", "Todas as simulações"]
         )
-
         with tab_overall:
             st.dataframe(best[display_cols], use_container_width=True, hide_index=True)
         with tab_campaign:
