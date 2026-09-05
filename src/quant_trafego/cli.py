@@ -121,7 +121,7 @@ def main():
         "p_profit",
         "p_roas_target",
         "p_action_optimal",
-        "decision_confidence",
+        "decision_score",
         "cvar10_profit",
     ]
     print(best[cols].to_string(index=False))
