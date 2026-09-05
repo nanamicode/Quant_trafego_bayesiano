@@ -36,6 +36,11 @@ def main():
         choices=["derivative", "state_space"],
         default="derivative",
     )
+    parser.add_argument(
+        "--disable-weekly-seasonality",
+        action="store_true",
+        help="Desativa o ajuste semanal encolhido de CTR/CVR.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--include-inactive",
@@ -68,6 +73,7 @@ def main():
             risk_aversion=args.risk_aversion,
             seed=args.seed,
             temporal_model=args.temporal_model,
+            use_weekly_seasonality=not args.disable_weekly_seasonality,
         )
     engine = BayesTrafficEngine(config)
     all_actions, best = engine.run(df)
