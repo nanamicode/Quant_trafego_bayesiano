@@ -24,6 +24,7 @@ def _actions():
                     "expected_profit": base_profit * gain,
                     "risk_adjusted_utility": base_profit * gain,
                     "p_profit": 0.9,
+                    "p_incremental_profit_positive": 0.85,
                     "cvar10_profit": 20.0,
                     "expected_regret": 5.0,
                     "response_confidence": 0.30,
