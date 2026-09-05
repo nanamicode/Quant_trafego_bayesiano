@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -134,3 +135,56 @@ def test_low_quality_data_blocks_scale_up_policy():
         best["decision_confidence"]
         <= best["decision_confidence_raw"]
     ).all()
+
+
+def test_action_results_are_invariant_to_action_grid_order():
+    df = pd.read_csv("examples/example_data.csv")
+    actions_a = (0.8, 1.0, 1.2)
+    actions_b = (1.2, 0.8, 1.0)
+
+    a, _ = BayesTrafficEngine(
+        EngineConfig(
+            draws=350,
+            seed=77,
+            actions=actions_a,
+        )
+    ).run(df)
+    b, _ = BayesTrafficEngine(
+        EngineConfig(
+            draws=350,
+            seed=77,
+            actions=actions_b,
+        )
+    ).run(df)
+
+    keys = [
+        "level",
+        "entity_id",
+        "action_multiplier",
+    ]
+    a = a.sort_values(keys).reset_index(drop=True)
+    b = b.sort_values(keys).reset_index(drop=True)
+
+    for col in [
+        "expected_profit",
+        "p_profit",
+        "p_roas_target",
+        "p_action_optimal",
+        "expected_regret",
+        "cvar10_profit",
+    ]:
+        assert np.allclose(
+            a[col].to_numpy(),
+            b[col].to_numpy(),
+            rtol=0,
+            atol=1e-12,
+        )
+
+
+def test_action_grid_requires_hold_baseline():
+    with pytest.raises(ValueError, match="1.0x"):
+        BayesTrafficEngine(
+            EngineConfig(
+                actions=(0.0, 0.8, 1.2),
+            )
+        )
