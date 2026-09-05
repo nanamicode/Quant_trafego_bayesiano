@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 
 from .model import BetaPosterior, aggregate, shrink_to, simulate_action, update_beta
+from .response import ResponseEstimate, estimate_response
+from .temporal import analyze_temporal
 
 
 REQUIRED = [
@@ -31,6 +33,10 @@ class EngineConfig:
     actions: tuple[float, ...] = (0.0, 0.5, 0.8, 1.0, 1.2, 1.5, 2.0)
     saturation_half: float = 1.5
     saturation_slope: float = 1.3
+    temporal_half_life_days: float = 14.0
+    temporal_recent_days: int = 7
+    use_temporal: bool = True
+    use_empirical_response: bool = True
 
     global_ctr_strength: float = 2500
     global_cvr_strength: float = 250
@@ -71,7 +77,7 @@ class BayesTrafficEngine:
         if (out["clicks"] > out["impressions"]).any():
             raise ValueError("Existem linhas onde cliques > impressões.")
         if (out["conversions"] > out["clicks"]).any():
-            raise ValueError("Neste MVP, conversões não podem exceder cliques.")
+            raise ValueError("Neste modelo de funil, conversões não podem exceder cliques.")
 
         return out
 
@@ -92,12 +98,44 @@ class BayesTrafficEngine:
 
     def _posterior(self, df, parent_ctr, parent_cvr, ctr_strength, cvr_strength):
         s = aggregate(df)
-        ctr = update_beta(shrink_to(parent_ctr, ctr_strength), s["clicks"], s["impressions"])
-        cvr = update_beta(shrink_to(parent_cvr, cvr_strength), s["conversions"], s["clicks"])
+        ctr = update_beta(
+            shrink_to(parent_ctr, ctr_strength),
+            s["clicks"],
+            s["impressions"],
+        )
+        cvr = update_beta(
+            shrink_to(parent_cvr, cvr_strength),
+            s["conversions"],
+            s["clicks"],
+        )
         return ctr, cvr
 
-    def _evaluate_entity(self, level, entity_id, df, ctr_post, cvr_post):
+    def _evaluate_entity(
+        self,
+        level,
+        entity_id,
+        df,
+        ctr_post,
+        cvr_post,
+        response_estimate: ResponseEstimate,
+    ):
         stats = aggregate(df)
+        temporal = analyze_temporal(
+            df,
+            half_life_days=self.config.temporal_half_life_days,
+            recent_days=self.config.temporal_recent_days,
+            seed=self.config.seed + (abs(hash((level, str(entity_id)))) % 100_000),
+        )
+
+        ctr_mean = temporal.ctr.effective_mean if self.config.use_temporal else 0.0
+        ctr_sd = temporal.ctr.effective_sd if self.config.use_temporal else 0.0
+        cvr_mean = temporal.cvr.effective_mean if self.config.use_temporal else 0.0
+        cvr_sd = temporal.cvr.effective_sd if self.config.use_temporal else 0.0
+
+        response_confidence = (
+            response_estimate.confidence if self.config.use_empirical_response else 0.0
+        )
+
         sims = []
         for action in self.config.actions:
             sims.append(
@@ -113,18 +151,38 @@ class BayesTrafficEngine:
                     rng=self.rng,
                     saturation_half=self.config.saturation_half,
                     saturation_slope=self.config.saturation_slope,
+                    temporal_ctr_slope_mean=ctr_mean,
+                    temporal_ctr_slope_sd=ctr_sd,
+                    temporal_cvr_slope_mean=cvr_mean,
+                    temporal_cvr_slope_sd=cvr_sd,
+                    response_elasticity_mean=response_estimate.elasticity_mean,
+                    response_elasticity_sd=response_estimate.elasticity_sd,
+                    response_confidence=response_confidence,
                 )
             )
 
         hold = next(x for x in sims if x["multiplier"] == 1.0)
         hold_draws = hold["_profit_draws"]
-        best_draws = np.maximum.reduce([x["_profit_draws"] for x in sims])
+        profit_matrix = np.vstack([x["_profit_draws"] for x in sims])
+        best_idx = np.argmax(profit_matrix, axis=0)
+        best_draws = np.max(profit_matrix, axis=0)
 
         rows = []
-        for sim in sims:
+        for i, sim in enumerate(sims):
             profit_draws = sim["_profit_draws"]
+            regret = float(np.mean(best_draws - profit_draws))
             downside = max(0.0, -sim["cvar10_profit"])
-            utility = sim["expected_profit"] - self.config.risk_aversion * downside
+            instability_penalty = (
+                temporal.instability_score * abs(sim["expected_profit"]) * 0.10
+            )
+            utility = (
+                sim["expected_profit"]
+                - self.config.risk_aversion * downside
+                - self.config.risk_aversion * 0.15 * regret
+                - self.config.risk_aversion * instability_penalty
+            )
+
+            incremental = profit_draws - hold_draws
             rows.append({
                 "level": level,
                 "entity_id": str(entity_id),
@@ -138,6 +196,20 @@ class BayesTrafficEngine:
                 "posterior_cvr_mean": cvr_post.mean,
                 "posterior_ctr_strength": ctr_post.strength,
                 "posterior_cvr_strength": cvr_post.strength,
+                "ctr_logit_derivative_per_day": temporal.ctr.mean,
+                "ctr_trend_confidence": temporal.ctr.confidence,
+                "cvr_logit_derivative_per_day": temporal.cvr.mean,
+                "cvr_trend_confidence": temporal.cvr.confidence,
+                "p_recent_ctr_better": temporal.p_recent_ctr_better,
+                "p_recent_cvr_better": temporal.p_recent_cvr_better,
+                "regime_change_score": temporal.regime_change_score,
+                "instability_score": temporal.instability_score,
+                "response_elasticity": response_estimate.elasticity_mean,
+                "response_elasticity_sd": response_estimate.elasticity_sd,
+                "response_confidence": response_estimate.confidence,
+                "p_diminishing_returns_proxy": (
+                    response_estimate.diminishing_returns_probability_proxy
+                ),
                 "contribution_margin": self.config.contribution_margin,
                 "action_multiplier": sim["multiplier"],
                 "expected_spend": sim["expected_spend"],
@@ -145,11 +217,15 @@ class BayesTrafficEngine:
                 "expected_profit": sim["expected_profit"],
                 "expected_roas": sim["expected_roas"],
                 "p_profit": sim["p_profit"],
+                "p_ruin": 1.0 - sim["p_profit"],
                 "p_roas_target": sim["p_roas_target"],
                 "p_beats_hold": float(np.mean(profit_draws > hold_draws)),
+                "p_action_optimal": float(np.mean(best_idx == i)),
+                "expected_incremental_profit_vs_hold": float(np.mean(incremental)),
+                "p_incremental_profit_positive": float(np.mean(incremental > 0)),
                 "var10_profit": sim["var10_profit"],
                 "cvar10_profit": sim["cvar10_profit"],
-                "expected_regret": float(np.mean(best_draws - profit_draws)),
+                "expected_regret": regret,
                 "risk_adjusted_utility": float(utility),
             })
         return rows
@@ -159,9 +235,20 @@ class BayesTrafficEngine:
         rows = []
 
         global_ctr, global_cvr = self._global_posteriors(df)
-        rows.extend(self._evaluate_entity("account", "ALL", df, global_ctr, global_cvr))
+        global_response = estimate_response(df)
+        rows.extend(
+            self._evaluate_entity(
+                "account",
+                "ALL",
+                df,
+                global_ctr,
+                global_cvr,
+                global_response,
+            )
+        )
 
         campaign_posts = {}
+        campaign_response = {}
         for campaign_id, cdf in df.groupby("campaign_id", sort=False):
             posts = self._posterior(
                 cdf,
@@ -170,22 +257,50 @@ class BayesTrafficEngine:
                 self.config.campaign_ctr_strength,
                 self.config.campaign_cvr_strength,
             )
+            response = estimate_response(cdf, parent=global_response)
             campaign_posts[campaign_id] = posts
-            rows.extend(self._evaluate_entity("campaign", campaign_id, cdf, *posts))
+            campaign_response[campaign_id] = response
+            rows.extend(
+                self._evaluate_entity(
+                    "campaign",
+                    campaign_id,
+                    cdf,
+                    *posts,
+                    response,
+                )
+            )
 
         adset_posts = {}
-        for (campaign_id, adset_id), sdf in df.groupby(["campaign_id", "adset_id"], sort=False):
+        adset_response = {}
+        for (campaign_id, adset_id), sdf in df.groupby(
+            ["campaign_id", "adset_id"],
+            sort=False,
+        ):
             posts = self._posterior(
                 sdf,
                 *campaign_posts[campaign_id],
                 self.config.adset_ctr_strength,
                 self.config.adset_cvr_strength,
             )
+            response = estimate_response(
+                sdf,
+                parent=campaign_response[campaign_id],
+            )
             adset_posts[(campaign_id, adset_id)] = posts
-            rows.extend(self._evaluate_entity("adset", adset_id, sdf, *posts))
+            adset_response[(campaign_id, adset_id)] = response
+            rows.extend(
+                self._evaluate_entity(
+                    "adset",
+                    adset_id,
+                    sdf,
+                    *posts,
+                    response,
+                )
+            )
 
         for (campaign_id, adset_id, ad_id), adf in df.groupby(
-            ["campaign_id", "adset_id", "ad_id"], sort=False
+            ["campaign_id", "adset_id", "ad_id"],
+            sort=False,
         ):
             posts = self._posterior(
                 adf,
@@ -193,15 +308,34 @@ class BayesTrafficEngine:
                 self.config.ad_ctr_strength,
                 self.config.ad_cvr_strength,
             )
-            rows.extend(self._evaluate_entity("ad", ad_id, adf, *posts))
+            response = estimate_response(
+                adf,
+                parent=adset_response[(campaign_id, adset_id)],
+            )
+            rows.extend(
+                self._evaluate_entity(
+                    "ad",
+                    ad_id,
+                    adf,
+                    *posts,
+                    response,
+                )
+            )
 
         all_actions = pd.DataFrame(rows)
         idx = all_actions.groupby(["level", "entity_id"])["risk_adjusted_utility"].idxmax()
         best = all_actions.loc[idx].copy().reset_index(drop=True)
+
+        confidence = (
+            0.40 * best["p_profit"]
+            + 0.25 * best["p_action_optimal"]
+            + 0.20 * best["p_roas_target"]
+            + 0.15 * (1.0 - best["instability_score"])
+        )
+        best["decision_confidence"] = np.clip(confidence, 0.0, 1.0)
         best["opportunity_score"] = (
-            best["expected_profit"]
-            * (0.5 + 0.5 * best["p_profit"])
-            * (0.5 + 0.5 * best["p_roas_target"])
+            best["risk_adjusted_utility"]
+            * (0.25 + 0.75 * best["decision_confidence"])
             / (1.0 + np.maximum(best["expected_regret"], 0.0))
         )
         best = best.sort_values(
