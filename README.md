@@ -2,43 +2,113 @@
 
 Analisador quantitativo Bayesiano local para tráfego pago.
 
-O projeto recebe uma planilha completa de mídia paga e analisa a hierarquia:
+O projeto recebe uma planilha completa e analisa a hierarquia:
 
 `conta → campanha → conjunto → anúncio`
 
-A inferência usa a visão global da conta para formar informação estatística para níveis com menos amostra, preservando a independência dos níveis quando a evidência cresce.
+A visão global da conta é usada como informação estatística para níveis com menos amostra. Conforme uma campanha, conjunto ou anúncio acumula evidência, seus próprios dados passam a dominar o posterior.
 
-## Objetivo
+## Forma oficial de rodar
 
-Transformar dados históricos em distribuições de probabilidade para decisões como:
+O projeto não depende de servidor pago.
 
-- pausar;
-- reduzir orçamento;
-- manter;
-- escalar;
-- redistribuir verba.
+Há dois modos:
 
-O sistema prioriza lucro esperado, risco de perda, probabilidade de superar metas, cauda de risco e regret esperado, em vez de regras humanas fixas.
+### 1. Interface local no navegador — recomendado para uso diário
+
+No Windows:
+
+```bat
+run_app_windows.bat
+```
+
+O script cria/usa um ambiente Python local, instala as dependências e abre a interface Streamlit em `localhost`.
+
+A planilha é processada no próprio computador.
+
+Na interface você escolhe:
+
+- arquivo CSV/XLSX;
+- profundidade da análise;
+- horizonte futuro;
+- ROAS alvo;
+- margem de contribuição;
+- aversão a risco;
+- incluir ou não entidades inativas.
+
+### 2. Terminal / CLI — recomendado para lotes e análises pesadas
+
+```bat
+run_windows.bat
+```
+
+Depois:
+
+```bat
+quant-trafego --input "C:\caminho\planilha.xlsx" --output output --draws 30000 --target-roas 2.0 --contribution-margin 0.40
+```
+
+Uma execução mais pesada:
+
+```bat
+quant-trafego --input "C:\caminho\planilha.xlsx" --output output_profundo --draws 100000 --target-roas 2.0 --contribution-margin 0.40
+```
+
+## Objetivo econômico
+
+O motor não assume que receita é lucro.
+
+Quando a margem de contribuição é informada:
+
+```text
+lucro econômico simulado = receita × margem de contribuição − gasto de mídia
+```
+
+Exemplo:
+
+```text
+receita prevista = R$ 10.000
+margem antes da mídia = 40%
+mídia = R$ 2.500
+
+lucro = 10.000 × 0,40 − 2.500 = R$ 1.500
+```
+
+Se a margem não for informada, o padrão atual é 100% apenas por compatibilidade.
 
 ## Como ele analisa
 
 1. Lê um CSV ou XLSX completo.
-2. Normaliza nomes de colunas comuns de exportação.
-3. Filtra entidades ativas quando existir coluna de status.
-4. Aprende primeiro o comportamento global da conta.
-5. Desce para campanha por campanha.
-6. Dentro de cada campanha, analisa conjunto por conjunto.
-7. Dentro de cada conjunto, analisa anúncio por anúncio.
-8. Usa partial pooling para não supervalorizar amostras pequenas.
-9. Simula milhares de futuros para diferentes ações de orçamento.
-10. Gera ranking de oportunidades e riscos.
+2. Normaliza nomes de colunas comuns.
+3. Filtra entidades ativas quando houver coluna de status.
+4. Analisa primeiro a conta inteira.
+5. Forma os posteriores globais.
+6. Desce campanha por campanha.
+7. Dentro de cada campanha, conjunto por conjunto.
+8. Dentro de cada conjunto, anúncio por anúncio.
+9. Usa partial pooling para controlar amostras pequenas.
+10. Simula milhares de futuros para diferentes ações.
+11. Compara risco, retorno e regret.
+12. Gera ranking de oportunidades e riscos.
 
-## Saídas
+## Ações atualmente simuladas
 
-Para cada entidade e ação, o motor calcula:
+```text
+0.0x   pausar
+0.5x   reduzir 50%
+0.8x   reduzir 20%
+1.0x   manter
+1.2x   aumentar 20%
+1.5x   aumentar 50%
+2.0x   dobrar
+```
 
-- lucro esperado;
+## Métricas de decisão
+
+Para cada entidade e ação:
+
 - receita esperada;
+- lucro esperado;
 - ROAS esperado;
 - P(lucro > 0);
 - P(ROAS > meta);
@@ -48,35 +118,25 @@ Para cada entidade e ação, o motor calcula:
 - expected regret;
 - utilidade ajustada ao risco.
 
-Os relatórios são salvos em:
+## Saídas
+
+CLI:
 
 - `all_actions.csv`
 - `best_actions.csv`
 - `summary.md`
 
-## Rodar no Windows
+Interface local:
 
-Clone o repositório e execute:
-
-```bat
-run_windows.bat
-```
-
-Depois, no terminal aberto:
-
-```bat
-quant-trafego --input "C:\caminho\planilha.xlsx" --output output --draws 30000 --target-roas 2.0
-```
-
-Para uma análise mais pesada, aumente `--draws`, por exemplo:
-
-```bat
-quant-trafego --input "C:\caminho\planilha.xlsx" --output output_profundo --draws 100000
-```
+- tabelas navegáveis;
+- visão global;
+- melhores ações;
+- todas as ações simuladas;
+- download dos CSVs.
 
 ## Formato mínimo esperado
 
-O motor tenta reconhecer aliases comuns, mas internamente precisa destas variáveis:
+O motor tenta reconhecer aliases comuns, mas internamente precisa de:
 
 ```text
 date
@@ -103,22 +163,20 @@ conta
         └── anúncio
 ```
 
-CTR e CVR usam distribuições Beta posteriores. Cada nível recebe informação do nível pai, mas a evidência própria passa a dominar conforme cresce a amostra.
+CTR e CVR usam distribuições Beta posteriores. CPM e ticket são tratados como distribuições positivas na etapa de simulação. Uma curva de Hill aproxima diminishing returns ao variar orçamento.
 
-Depois o motor usa Monte Carlo para comparar ações de orçamento.
+## Direção da versão profunda
 
-## Próxima fase
+A evolução planejada é transformar o núcleo atual em uma inferência Bayesiana completa:
 
-A fase profunda do projeto está planejada para incorporar:
-
-- PyMC / NumPyro para MCMC hierárquico completo;
+- PyMC / NumPyro para MCMC hierárquico;
 - ArviZ para R-hat, ESS e posterior predictive checks;
 - efeitos temporais e mudança de regime;
 - PyMC-Marketing para adstock, saturação e resposta marginal;
-- Google Meridian como referência para MMM Bayesiano agregado;
+- Google Meridian como referência complementar para MMM agregado;
 - MABWiser para Thompson Sampling;
-- Ax + BoTorch para otimização Bayesiana de orçamento e múltiplas restrições.
+- Ax + BoTorch para otimização Bayesiana de orçamento sob restrições.
 
-Veja também `ARCHITECTURE.md`.
+Veja `ARCHITECTURE.md`.
 
-> As probabilidades produzidas pelo sistema são condicionais à qualidade dos dados e às hipóteses do modelo; não representam garantia de lucro.
+> As probabilidades são condicionais aos dados e às hipóteses do modelo. O sistema não representa garantia de lucro.
