@@ -91,6 +91,29 @@ def _capital_action(
     return "MANTER"
 
 
+def _capital_action_from_amounts(
+    level: str,
+    current: float,
+    recommended: float,
+    *,
+    tolerance: float,
+) -> str:
+    current = max(float(current), 0.0)
+    recommended = max(float(recommended), 0.0)
+
+    if recommended <= 1e-9:
+        return "DESLIGAR" if current > 1e-9 else "MANTER"
+
+    if current <= 1e-9:
+        return "PRIORIZAR_MAIS" if level == "ad" else "AUMENTAR"
+
+    return _capital_action(
+        level,
+        recommended / current,
+        tolerance=tolerance,
+    )
+
+
 def _duplicate_decision(
     row: pd.Series,
     cfg: OperationalPlanConfig,
@@ -422,6 +445,24 @@ def build_operational_action_plan(
             sort=False,
         )
 
+    campaign_daily_targets: dict[str, float] = {}
+    for _, campaign_row in best[
+        best["level"] == "campaign"
+    ].iterrows():
+        campaign_current, _, _ = _budget_reference(
+            campaign_row,
+            source_df,
+            recent_spend_days=cfg.recent_spend_days,
+        )
+        campaign_daily_targets[
+            str(campaign_row["entity_id"])
+        ] = (
+            campaign_current
+            * float(
+                campaign_row["action_multiplier"]
+            )
+        )
+
     records: list[dict] = []
 
     for _, row in best.iterrows():
@@ -443,6 +484,58 @@ def build_operational_action_plan(
         recommended_daily = (
             current_daily * multiplier
         )
+        nested_budget_reconciled = False
+        parent_campaign_recommended_daily = np.nan
+        parent_campaign_spend_share = np.nan
+
+        if level == "adset":
+            campaign_id = str(
+                row.get("campaign_id", "")
+            )
+            parent_limit = pd.to_numeric(
+                pd.Series(
+                    [
+                        row.get(
+                            "parent_campaign_budget_limit",
+                            np.nan,
+                        )
+                    ]
+                ),
+                errors="coerce",
+            ).iloc[0]
+            expected_spend = float(
+                row.get(
+                    "expected_spend",
+                    0.0,
+                )
+            )
+            if (
+                campaign_id in campaign_daily_targets
+                and np.isfinite(parent_limit)
+            ):
+                parent_campaign_recommended_daily = (
+                    campaign_daily_targets[
+                        campaign_id
+                    ]
+                )
+                if parent_limit > 1e-9:
+                    parent_campaign_spend_share = float(
+                        np.clip(
+                            expected_spend
+                            / float(parent_limit),
+                            0.0,
+                            1.0,
+                        )
+                    )
+                else:
+                    parent_campaign_spend_share = 0.0
+
+                recommended_daily = (
+                    parent_campaign_recommended_daily
+                    * parent_campaign_spend_share
+                )
+                nested_budget_reconciled = True
+
         delta_daily = (
             recommended_daily
             - current_daily
@@ -456,10 +549,16 @@ def build_operational_action_plan(
             * int(horizon_days)
         )
 
-        capital_action = _capital_action(
+        capital_action = _capital_action_from_amounts(
             level,
-            multiplier,
+            current_daily,
+            recommended_daily,
             tolerance=cfg.hold_tolerance,
+        )
+        operational_multiplier = (
+            recommended_daily / current_daily
+            if current_daily > 1e-9
+            else np.nan
         )
         (
             duplicate_action,
@@ -485,6 +584,12 @@ def build_operational_action_plan(
                     "capacidade ao conjunto/campanha que o contém ou use "
                     "duplicação apenas conforme o campo de duplicação."
                 )
+        elif nested_budget_reconciled:
+            execution_note = (
+                "Valor absoluto reconciliado com o capital aprovado para a "
+                "campanha pai; o multiplicador do modelo é usado dentro do "
+                "solver, mas o R$/dia final respeita o orçamento do pai."
+            )
         elif direct_budget:
             execution_note = (
                 "Valor calculado sobre orçamento diário informado na planilha."
@@ -536,13 +641,19 @@ def build_operational_action_plan(
                 "entity_id": str(row["entity_id"]),
                 "capital_action": capital_action,
                 "action_multiplier": multiplier,
+                "operational_amount_multiplier": operational_multiplier,
+                "nested_budget_reconciled": nested_budget_reconciled,
+                "parent_campaign_recommended_daily_amount": parent_campaign_recommended_daily,
+                "parent_campaign_spend_share": parent_campaign_spend_share,
                 "amount_basis": amount_basis,
                 "direct_budget_available": direct_budget,
                 "current_daily_amount": current_daily,
                 "recommended_daily_amount": recommended_daily,
                 "daily_amount_change": delta_daily,
                 "daily_amount_change_pct": (
-                    multiplier - 1.0
+                    delta_daily / current_daily
+                    if current_daily > 1e-9
+                    else np.nan
                 ),
                 "current_horizon_amount": current_horizon,
                 "recommended_horizon_amount": recommended_horizon,
