@@ -423,6 +423,7 @@ class BayesTrafficEngine:
         posterior_source: str,
     ):
         stats = aggregate(df)
+        recent = self._recent_operating_stats(df)
         entity_context = self._entity_context(level, entity_id, df)
         temporal = self._temporal_signal(df, level, entity_id)
 
@@ -457,6 +458,22 @@ class BayesTrafficEngine:
         cvr_mean = temporal.cvr.effective_mean if self.config.use_temporal else 0.0
         cvr_sd = temporal.cvr.effective_sd if self.config.use_temporal else 0.0
 
+        if (
+            self.config.use_temporal
+            and posterior_source != "mcmc"
+        ):
+            current_ctr_shift = (
+                temporal.ctr_current_logit_shift
+                * temporal.ctr_current_shift_confidence
+            )
+            current_cvr_shift = (
+                temporal.cvr_current_logit_shift
+                * temporal.cvr_current_shift_confidence
+            )
+        else:
+            current_ctr_shift = 0.0
+            current_cvr_shift = 0.0
+
         response_confidence = (
             response_estimate.confidence if self.config.use_empirical_response else 0.0
         )
@@ -483,6 +500,9 @@ class BayesTrafficEngine:
             temporal_cvr_slope_sd=cvr_sd,
             response_elasticity_mean=response_estimate.elasticity_mean,
             response_elasticity_sd=response_estimate.elasticity_sd,
+            current_ctr_logit_shift=current_ctr_shift,
+            current_cvr_logit_shift=current_cvr_shift,
+            temporal_projection_days=self.config.temporal_projection_days,
             seasonal_ctr_shift_mean=ctr_weekly_mean,
             seasonal_ctr_shift_sd=ctr_weekly_sd,
             seasonal_cvr_shift_mean=cvr_weekly_mean,
@@ -516,6 +536,10 @@ class BayesTrafficEngine:
                     response_elasticity_mean=response_estimate.elasticity_mean,
                     response_elasticity_sd=response_estimate.elasticity_sd,
                     response_confidence=response_confidence,
+                    base_daily_spend=recent["recent_daily_spend"],
+                    current_ctr_logit_shift=current_ctr_shift,
+                    current_cvr_logit_shift=current_cvr_shift,
+                    temporal_projection_days=self.config.temporal_projection_days,
                     seasonal_ctr_shift_mean=ctr_weekly_mean,
                     seasonal_ctr_shift_sd=ctr_weekly_sd,
                     seasonal_cvr_shift_mean=cvr_weekly_mean,
@@ -572,6 +596,15 @@ class BayesTrafficEngine:
                 "historical_roas": stats["roas"],
                 "historical_ctr": stats["ctr"],
                 "historical_cvr": stats["cvr"],
+                "action_baseline_daily_spend": recent["recent_daily_spend"],
+                "action_baseline_recent_days": recent["recent_days"],
+                "recent_spend": recent["recent_spend"],
+                "recent_revenue": recent["recent_revenue"],
+                "recent_conversions": recent["recent_conversions"],
+                "recent_roas": recent["recent_roas"],
+                "recent_cpa": recent["recent_cpa"],
+                "recent_contribution_profit": recent["recent_contribution_profit"],
+                "recent_contribution_roas": recent["recent_contribution_roas"],
                 "posterior_ctr_mean": ctr_post.mean,
                 "posterior_cvr_mean": cvr_post.mean,
                 "posterior_ctr_strength": ctr_post.strength,
@@ -580,6 +613,11 @@ class BayesTrafficEngine:
                 "ctr_trend_confidence": temporal.ctr.confidence,
                 "cvr_logit_derivative_per_day": temporal.cvr.mean,
                 "cvr_trend_confidence": temporal.cvr.confidence,
+                "ctr_current_logit_shift": current_ctr_shift,
+                "cvr_current_logit_shift": current_cvr_shift,
+                "temporal_projection_days": float(
+                    self.config.temporal_projection_days
+                ),
                 "p_recent_ctr_better": temporal.p_recent_ctr_better,
                 "p_recent_cvr_better": temporal.p_recent_cvr_better,
                 "regime_change_score": temporal.regime_change_score,
