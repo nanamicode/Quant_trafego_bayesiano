@@ -221,3 +221,76 @@ def test_entity_selection_uses_revenue_only_as_secondary_objective():
     )
     idx = engine._select_profit_first_growth_indices(actions)
     assert idx == [1]
+
+
+def test_inactive_history_informs_active_prior_without_receiving_actions():
+    rows = []
+    for day in range(14):
+        date = pd.Timestamp("2026-08-01") + pd.Timedelta(days=day)
+        rows.extend(
+            [
+                {
+                    "date": date,
+                    "campaign_id": "c_active",
+                    "adset_id": "s_active",
+                    "ad_id": "a_active",
+                    "status": "active",
+                    "impressions": 1000,
+                    "clicks": 10,
+                    "conversions": 1,
+                    "spend": 50.0,
+                    "revenue": 100.0,
+                },
+                {
+                    "date": date,
+                    "campaign_id": "c_paused",
+                    "adset_id": "s_paused",
+                    "ad_id": "a_paused",
+                    "status": "paused",
+                    "impressions": 1000,
+                    "clicks": 200,
+                    "conversions": 20,
+                    "spend": 50.0,
+                    "revenue": 2000.0,
+                },
+            ]
+        )
+
+    full = pd.DataFrame(rows)
+    decision_entities = {
+        "campaign": {"c_active"},
+        "adset": {"s_active"},
+        "ad": {"a_active"},
+    }
+    cfg = EngineConfig(
+        draws=200,
+        seed=123,
+    )
+    full_actions, _ = BayesTrafficEngine(cfg).run(
+        full,
+        decision_entities=decision_entities,
+    )
+    active_only = full[
+        full["campaign_id"] == "c_active"
+    ].copy()
+    active_actions, _ = BayesTrafficEngine(cfg).run(
+        active_only
+    )
+
+    assert set(full_actions["entity_id"]) == {
+        "ALL",
+        "c_active",
+        "s_active",
+        "a_active",
+    }
+    full_ctr = full_actions.loc[
+        (full_actions["level"] == "campaign")
+        & (full_actions["entity_id"] == "c_active"),
+        "posterior_ctr_mean",
+    ].iloc[0]
+    active_ctr = active_actions.loc[
+        (active_actions["level"] == "campaign")
+        & (active_actions["entity_id"] == "c_active"),
+        "posterior_ctr_mean",
+    ].iloc[0]
+    assert full_ctr > active_ctr
