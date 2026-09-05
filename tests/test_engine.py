@@ -13,3 +13,15 @@ def test_engine_runs():
     assert {"account", "campaign", "adset", "ad"} <= set(all_actions["level"])
     assert all_actions["p_profit"].between(0, 1).all()
     assert all_actions["p_roas_target"].between(0, 1).all()
+
+
+def test_zero_contribution_margin_cannot_generate_profit_with_spend():
+    df = pd.read_csv("examples/example_data.csv")
+    engine = BayesTrafficEngine(
+        EngineConfig(draws=500, seed=123, contribution_margin=0.0)
+    )
+    all_actions, _ = engine.run(df)
+
+    spending_actions = all_actions[all_actions["expected_spend"] > 0]
+    assert (spending_actions["p_profit"] == 0.0).all()
+    assert (spending_actions["expected_profit"] < 0.0).all()
