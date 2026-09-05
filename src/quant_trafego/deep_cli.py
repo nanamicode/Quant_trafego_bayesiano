@@ -7,6 +7,8 @@ from .engine import EngineConfig
 from .hardware import detect_hardware
 from .io import filter_active, load_ads_file
 from .quality import assess_data_quality
+from .reproducibility import build_run_manifest, write_run_manifest
+from .storage import LocalWarehouse
 
 
 def main():
@@ -18,6 +20,7 @@ def main():
     )
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", default="output_mcmc")
+    parser.add_argument("--workspace", default="workspace")
     parser.add_argument("--target-roas", type=float, default=2.0)
     parser.add_argument("--contribution-margin", type=float, default=1.0)
     parser.add_argument("--horizon-days", type=int, default=7)
@@ -57,16 +60,18 @@ def main():
     for warning in quality.warnings:
         print(f"AVISO: {warning}")
 
-    result = run_deep_analysis(
-        df,
-        engine_config=EngineConfig(
+    config = EngineConfig(
             target_roas=args.target_roas,
             contribution_margin=args.contribution_margin,
             horizon_days=args.horizon_days,
             draws=mc_draws,
             risk_aversion=args.risk_aversion,
             seed=args.seed,
-        ),
+        )
+
+    result = run_deep_analysis(
+        df,
+        engine_config=config,
         mcmc_draws=args.mcmc_draws,
         mcmc_tune=args.mcmc_tune,
         mcmc_chains=chains,
@@ -78,6 +83,23 @@ def main():
         output_dir=args.output,
     )
 
+    manifest = build_run_manifest(
+        df,
+        config=config,
+        inference_mode=f"mcmc_{result.diagnostics.method}",
+        seed=args.seed,
+        extra={
+            "quality_score": quality.score,
+            "quality_warnings": list(quality.warnings),
+            "mcmc_diagnostics": result.diagnostics.__dict__,
+        },
+    )
+    write_run_manifest(manifest, args.output)
+    workspace = LocalWarehouse(args.workspace)
+    run_dir = workspace.persist_run(
+        df, manifest, result.all_actions, result.best_actions
+    )
+    print(f"Run auditável: {run_dir}")
     print(result.diagnostics)
     cols = [
         "level",
