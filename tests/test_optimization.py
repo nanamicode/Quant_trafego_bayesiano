@@ -61,3 +61,48 @@ def test_optimizer_cannot_override_engine_policy_eligibility():
         total_budget=300.0,
     )
     assert (selected["action_multiplier"] <= 1.0).all()
+
+
+def test_revenue_breaks_near_optimal_profit_tie():
+    actions = pd.DataFrame(
+        [
+            {
+                "level": "campaign",
+                "entity_id": "c1",
+                "action_multiplier": 1.0,
+                "expected_spend": 100.0,
+                "expected_profit": 100.0,
+                "expected_revenue": 500.0,
+                "risk_adjusted_utility": 100.0,
+                "p_profit": 0.9,
+                "p_incremental_profit_positive": 0.8,
+                "cvar10_profit": 20.0,
+                "expected_regret": 5.0,
+                "response_confidence": 0.3,
+            },
+            {
+                "level": "campaign",
+                "entity_id": "c1",
+                "action_multiplier": 1.2,
+                "expected_spend": 120.0,
+                "expected_profit": 99.0,
+                "expected_revenue": 900.0,
+                "risk_adjusted_utility": 99.0,
+                "p_profit": 0.9,
+                "p_incremental_profit_positive": 0.8,
+                "cvar10_profit": 20.0,
+                "expected_regret": 5.0,
+                "response_confidence": 0.3,
+            },
+        ]
+    )
+    selected, summary = optimize_campaign_allocation(
+        actions,
+        total_budget=120.0,
+        config=AllocationConfig(
+            revenue_tiebreak=True,
+            revenue_tiebreak_tolerance=0.02,
+        ),
+    )
+    assert selected.iloc[0]["action_multiplier"] == 1.2
+    assert summary["expected_portfolio_revenue_additive"] == 900.0
