@@ -12,7 +12,7 @@ A saída principal é operational_action_plan.csv.
 - impacto esperado em lucro e faturamento;
 - probabilidade de ganho incremental, P(lucro), P(ROAS alvo), CVaR e nível de evidência.
 
-A recomendação de campanha usa a alocação global restrita quando disponível, em vez de simplesmente somar ótimos independentes.
+A recomendação usa uma árvore coerente de capital: a decisão da conta define o total a investir no horizonte; o portfólio distribui esse total entre campanhas; depois os conjuntos são reconciliados para não ultrapassar o valor aprovado da campanha. Anúncios não recebem orçamento próprio e são tratados como manter, desligar, priorizar ou candidato a duplicação.
 
 ## Objetivo econômico
 
