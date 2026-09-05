@@ -162,6 +162,23 @@ def fit_hierarchical_funnel(
     ad_idx = data["ad_idx"].to_numpy(dtype=int)
     date_idx = data["date_idx"].to_numpy(dtype=int)
 
+    ad_clicks = np.bincount(
+        ad_idx,
+        weights=clicks,
+        minlength=n_ads,
+    ).astype(int)
+    ad_conversions = np.bincount(
+        ad_idx,
+        weights=conversions,
+        minlength=n_ads,
+    ).astype(int)
+    if np.any(ad_conversions > ad_clicks):
+        raise ValueError(
+            "Há anúncios em que conversões agregadas excedem cliques "
+            "agregados; o MCMC de propensão clique→compra não é válido "
+            "para essa base sem um modelo de atribuição por exposição."
+        )
+
     adset_campaign_idx = mapping["adset_campaign_idx"]
     ad_adset_idx = mapping["ad_adset_idx"]
 
@@ -200,7 +217,7 @@ def fit_hierarchical_funnel(
             dims="ad",
         )
 
-        def funnel(prefix: str, base_rate: float):
+        def funnel(prefix: str, base_rate: float, *, use_time_effect: bool = True):
             mu = pm.Normal(
                 f"{prefix}_mu",
                 mu=_safe_logit(base_rate),
@@ -236,7 +253,7 @@ def fit_hierarchical_funnel(
                 + sigma_ad * z_ad
             )
 
-            if include_global_time_effect and n_days >= 4:
+            if include_global_time_effect and use_time_effect and n_days >= 4:
                 sigma_time = pm.HalfNormal(
                     f"{prefix}_sigma_time",
                     sigma=0.12,
@@ -305,8 +322,20 @@ def fit_hierarchical_funnel(
             )
             return pm.math.sigmoid(eta_entity)
 
-        p_ctr_entity = funnel("ctr", global_ctr)
-        p_cvr_entity = funnel("cvr", global_cvr)
+        p_ctr_entity = funnel(
+            "ctr",
+            global_ctr,
+            use_time_effect=True,
+        )
+        # Meta Ads daily conversions can be attributed to earlier clicks or
+        # view-through exposure. We therefore estimate the hierarchical CVR
+        # likelihood on each ad's full-period click/conversion totals instead
+        # of forcing a false same-day Binomial funnel.
+        funnel(
+            "cvr",
+            global_cvr,
+            use_time_effect=False,
+        )
 
         pm.Binomial(
             "clicks_obs",
@@ -317,10 +346,10 @@ def fit_hierarchical_funnel(
         )
         pm.Binomial(
             "conversions_obs",
-            n=clicks,
-            p=p_cvr_entity,
-            observed=conversions,
-            dims="entity",
+            n=ad_clicks,
+            p=model["cvr_p_ad"],
+            observed=ad_conversions,
+            dims="ad",
         )
 
         selected = method
@@ -378,7 +407,7 @@ def fit_hierarchical_funnel(
             "cvr_sigma_ad",
         ]
         if include_global_time_effect and n_days >= 4:
-            var_names += ["ctr_sigma_time", "cvr_sigma_time"]
+            var_names += ["ctr_sigma_time"]
 
         summary = az.summary(
             idata,
