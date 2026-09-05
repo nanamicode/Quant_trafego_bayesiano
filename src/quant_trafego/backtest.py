@@ -50,6 +50,7 @@ def rolling_origin_backtest(
     horizon_days: int | None = None,
     step_days: int = 7,
     levels: tuple[str, ...] = ("account", "campaign", "adset", "ad"),
+    progress_callback=None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Rolling-origin predictive validation under the approximately observed
@@ -72,7 +73,26 @@ def rolling_origin_backtest(
     records: list[dict] = []
 
     last_origin_index = len(dates) - horizon - 1
-    for origin_index in range(min_train_days - 1, last_origin_index + 1, step_days):
+    origin_indices = list(
+        range(
+            min_train_days - 1,
+            last_origin_index + 1,
+            step_days,
+        )
+    )
+    total_origins = len(origin_indices)
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "phase": "backtest",
+                "event": "start",
+                "completed": 0,
+                "total": total_origins,
+                "progress": 0.0,
+            }
+        )
+
+    for fold_number, origin_index in enumerate(origin_indices, start=1):
         train_dates = dates[: origin_index + 1]
         future_dates = dates[origin_index + 1 : origin_index + 1 + horizon]
         if len(future_dates) < horizon:
@@ -89,8 +109,25 @@ def rolling_origin_backtest(
             seed=base_config.seed + origin_index,
         )
         fold_engine = BayesTrafficEngine(cfg)
-        all_actions, _ = fold_engine.run(train)
         origin_date = pd.Timestamp(train_dates[-1])
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "phase": "backtest",
+                    "event": "fold_start",
+                    "fold": fold_number,
+                    "completed": fold_number - 1,
+                    "total": total_origins,
+                    "progress": (
+                        (fold_number - 1) / max(total_origins, 1)
+                    ),
+                    "origin_date": origin_date,
+                }
+            )
+        all_actions, _ = fold_engine.run(
+            train,
+            evaluation_levels=set(levels),
+        )
 
         for level in levels:
             level_actions = all_actions[all_actions["level"] == level]
@@ -166,6 +203,21 @@ def rolling_origin_backtest(
                         "posterior_source": chosen["posterior_source"],
                     }
                 )
+
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "phase": "backtest",
+                    "event": "fold_done",
+                    "fold": fold_number,
+                    "completed": fold_number,
+                    "total": total_origins,
+                    "progress": (
+                        fold_number / max(total_origins, 1)
+                    ),
+                    "origin_date": origin_date,
+                }
+            )
 
     detail = pd.DataFrame(records)
     if detail.empty:
