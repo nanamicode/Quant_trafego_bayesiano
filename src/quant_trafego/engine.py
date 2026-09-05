@@ -259,19 +259,123 @@ class BayesTrafficEngine:
         return fallback, "empirical_bayes"
 
     def _global_posteriors(self, df: pd.DataFrame):
+        """
+        Global empirical posterior with a weak Jeffreys prior.
+
+        The previous implementation centered a strong prior on the same data
+        and then updated with those observations again. For hierarchy means we
+        need the data to enter the likelihood once.
+        """
         s = aggregate(df)
-        ctr_prior = BetaPosterior(
-            1 + s["ctr"] * self.config.global_ctr_strength,
-            1 + (1 - s["ctr"]) * self.config.global_ctr_strength,
-        )
-        cvr_prior = BetaPosterior(
-            1 + s["cvr"] * self.config.global_cvr_strength,
-            1 + (1 - s["cvr"]) * self.config.global_cvr_strength,
-        )
+        ctr_prior = BetaPosterior(0.5, 0.5)
+        cvr_prior = BetaPosterior(0.5, 0.5)
         return (
-            update_beta(ctr_prior, s["clicks"], s["impressions"]),
-            update_beta(cvr_prior, s["conversions"], s["clicks"]),
+            update_beta(
+                ctr_prior,
+                s["clicks"],
+                s["impressions"],
+            ),
+            update_beta(
+                cvr_prior,
+                s["conversions"],
+                s["clicks"],
+            ),
         )
+
+    def _global_hyperprior(
+        self,
+        df: pd.DataFrame,
+    ) -> tuple[BetaPosterior, BetaPosterior]:
+        s = aggregate(df)
+        return (
+            beta_from_mean(
+                s["ctr"],
+                self.config.global_ctr_strength,
+            ),
+            beta_from_mean(
+                s["cvr"],
+                self.config.global_cvr_strength,
+            ),
+        )
+
+    def _external_parent(
+        self,
+        reference_df: pd.DataFrame,
+        fallback_df: pd.DataFrame,
+    ) -> tuple[BetaPosterior, BetaPosterior]:
+        if (
+            not reference_df.empty
+            and float(reference_df["impressions"].sum()) > 0
+            and float(reference_df["clicks"].sum()) > 0
+        ):
+            return self._global_posteriors(reference_df)
+        return self._global_hyperprior(fallback_df)
+
+    def _recent_operating_stats(
+        self,
+        df: pd.DataFrame,
+    ) -> dict:
+        latest = pd.to_datetime(df["date"]).max()
+        cutoff = latest - pd.Timedelta(
+            days=max(
+                int(
+                    self.config.action_baseline_recent_days
+                ),
+                1,
+            )
+            - 1
+        )
+        recent = df[
+            pd.to_datetime(df["date"]) >= cutoff
+        ].copy()
+        calendar_days = max(
+            int(
+                self.config.action_baseline_recent_days
+            ),
+            1,
+        )
+        spend = float(recent["spend"].sum())
+        revenue = float(recent["revenue"].sum())
+        conversions = float(
+            recent["conversions"].sum()
+        )
+        impressions = float(
+            recent["impressions"].sum()
+        )
+        clicks = float(recent["clicks"].sum())
+        daily_spend = spend / calendar_days
+        contribution_profit = (
+            revenue
+            * self.config.contribution_margin
+            - spend
+        )
+        return {
+            "recent_days": calendar_days,
+            "recent_spend": spend,
+            "recent_revenue": revenue,
+            "recent_conversions": conversions,
+            "recent_impressions": impressions,
+            "recent_clicks": clicks,
+            "recent_daily_spend": daily_spend,
+            "recent_roas": (
+                revenue / spend
+                if spend > 0
+                else 0.0
+            ),
+            "recent_cpa": (
+                spend / conversions
+                if conversions > 0
+                else np.nan
+            ),
+            "recent_contribution_profit": contribution_profit,
+            "recent_contribution_roas": (
+                revenue
+                * self.config.contribution_margin
+                / spend
+                if spend > 0
+                else 0.0
+            ),
+        }
 
     def _posterior(self, df, parent_ctr, parent_cvr, ctr_strength, cvr_strength):
         s = aggregate(df)
