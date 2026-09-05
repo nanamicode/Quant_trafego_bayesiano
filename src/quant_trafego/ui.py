@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 import tempfile
 
@@ -149,6 +149,12 @@ def main():
                 f"{quality.campaigns} campanhas | {quality.adsets} conjuntos | "
                 f"{quality.ads} anúncios | qualidade {quality.score:.0f}/100."
             )
+            st.caption(
+                f"Cobertura calendário: {quality.calendar_coverage_ratio:.1%} | "
+                f"campanha mediana ativa: {quality.median_campaign_active_days:.0f} dias | "
+                f"pares com <5 dias de sobreposição: "
+                f"{quality.low_overlap_campaign_pair_fraction:.1%}."
+            )
             for warning in quality.warnings:
                 st.warning(warning)
 
@@ -252,6 +258,7 @@ def main():
                 extra={
                     "quality_score": quality.score,
                     "quality_warnings": list(quality.warnings),
+                    "quality_report": asdict(quality),
                     "mcmc_diagnostics": (
                         diagnostics.__dict__ if diagnostics is not None else None
                     ),
