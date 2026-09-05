@@ -102,3 +102,19 @@ def test_pairwise_correlation_is_shrunk_by_actual_overlap():
     # Raw overlap correlation is nearly one, but only five shared days
     # exist, so pair-specific shrinkage must keep dependence conservative.
     assert 0.0 < corr[0, 1] < 0.35
+
+
+def test_portfolio_cannot_override_engine_policy_eligibility():
+    actions = _actions()
+    actions["policy_eligible"] = actions["action_multiplier"] <= 1.0
+    selected, _ = optimize_campaign_portfolio(
+        actions,
+        _history(),
+        contribution_margin=1.0,
+        total_budget=300.0,
+        risk_config=PortfolioRiskConfig(
+            scenarios=150,
+            seed=12,
+        ),
+    )
+    assert (selected["action_multiplier"] <= 1.0).all()
