@@ -14,6 +14,12 @@ def main():
     parser.add_argument("--input", required=True, help="Arquivo .csv ou .xlsx")
     parser.add_argument("--output", default="output", help="Pasta de saída")
     parser.add_argument("--target-roas", type=float, default=2.0)
+    parser.add_argument(
+        "--contribution-margin",
+        type=float,
+        default=1.0,
+        help="Margem de contribuição antes da mídia, de 0 a 1. Ex.: 0.40 = 40%%.",
+    )
     parser.add_argument("--horizon-days", type=int, default=7)
     parser.add_argument("--draws", type=int, default=30000)
     parser.add_argument("--risk-aversion", type=float, default=0.25)
@@ -32,6 +38,7 @@ def main():
     engine = BayesTrafficEngine(
         EngineConfig(
             target_roas=args.target_roas,
+            contribution_margin=args.contribution_margin,
             horizon_days=args.horizon_days,
             draws=args.draws,
             risk_aversion=args.risk_aversion,
