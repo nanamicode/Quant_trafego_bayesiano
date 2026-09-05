@@ -212,18 +212,47 @@ def assess_data_quality(
         numeric["impressions"].fillna(0).eq(0).sum()
     )
 
+    # Meta Ads attribution is not a same-day literal funnel:
+    # purchases can be credited today for earlier clicks or view-through
+    # exposure. Daily conversions > daily clicks is therefore not itself a
+    # tracking violation. Clicks > impressions is impossible, while
+    # conversions > clicks is checked over the ad's full observed history.
     funnel_violation = (
-        (
-            numeric["clicks"]
-            > numeric["impressions"]
+        numeric["clicks"]
+        > numeric["impressions"]
+    ).fillna(False)
+
+    if "ad_id" in df.columns:
+        aggregate_check = pd.DataFrame(
+            {
+                "ad_id": df["ad_id"].astype(str),
+                "clicks": numeric["clicks"].fillna(0.0),
+                "conversions": numeric["conversions"].fillna(0.0),
+            }
+        ).groupby("ad_id", as_index=False).sum()
+        invalid_ads = set(
+            aggregate_check.loc[
+                aggregate_check["conversions"]
+                > aggregate_check["clicks"],
+                "ad_id",
+            ].astype(str)
         )
-        | (
-            numeric["conversions"]
-            > numeric["clicks"]
+        if invalid_ads:
+            funnel_violation |= (
+                df["ad_id"].astype(str).isin(invalid_ads)
+            )
+    else:
+        total_clicks = float(
+            numeric["clicks"].fillna(0.0).sum()
         )
-    )
+        total_conversions = float(
+            numeric["conversions"].fillna(0.0).sum()
+        )
+        if total_conversions > total_clicks:
+            funnel_violation[:] = True
+
     funnel_tracking_violation_rows = int(
-        funnel_violation.fillna(False).sum()
+        funnel_violation.sum()
     )
 
     key = [
@@ -299,8 +328,9 @@ def assess_data_quality(
 
     if funnel_tracking_violation_rows:
         warnings.append(
-            f"{funnel_tracking_violation_rows} linhas violam "
-            "impressões ≥ cliques ≥ conversões."
+            f"{funnel_tracking_violation_rows} linhas pertencem a uma "
+            "estrutura com tracking agregado incoerente "
+            "(cliques > impressões ou conversões agregadas > cliques)."
         )
         penalty += min(
             30.0,
