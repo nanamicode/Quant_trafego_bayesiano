@@ -121,8 +121,24 @@ class BayesTrafficEngine:
 
         if (out["clicks"] > out["impressions"]).any():
             raise ValueError("Existem linhas onde cliques > impressões.")
-        if (out["conversions"] > out["clicks"]).any():
-            raise ValueError("Neste modelo de funil, conversões não podem exceder cliques.")
+        # Meta Ads attribution is not a literal same-day funnel:
+        # purchases can be credited today for earlier clicks or view-through
+        # exposure. Daily conversions may therefore exceed same-day clicks.
+        # The fast click-to-conversion posterior only requires coherence over
+        # the full history of each ad.
+        aggregated = (
+            out.groupby("ad_id", as_index=False)
+            .agg(
+                clicks=("clicks", "sum"),
+                conversions=("conversions", "sum"),
+            )
+        )
+        if (aggregated["conversions"] > aggregated["clicks"]).any():
+            raise ValueError(
+                "Há anúncios em que conversões agregadas no período excedem "
+                "cliques agregados. Essa base exige um modelo de atribuição "
+                "por exposição antes de estimar CVR por clique."
+            )
 
         return out
 
