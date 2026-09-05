@@ -12,7 +12,7 @@ from quant_trafego.funnel import detect_funnel_schema, hierarchical_funnel_diagn
 from quant_trafego.hardware import detect_hardware
 from quant_trafego.io import filter_active, load_ads_file
 from quant_trafego.model_selection import compare_temporal_models
-from quant_trafego.optimization import optimize_campaign_allocation
+from quant_trafego.optimization import optimize_adset_allocation, optimize_campaign_allocation
 from quant_trafego.portfolio import optimize_campaign_portfolio
 from quant_trafego.quality import assess_data_quality
 from quant_trafego.reproducibility import build_run_manifest
@@ -264,9 +264,24 @@ def main():
                         "portfolio_reason": str(portfolio_exc),
                     }
 
+            adset_allocation = None
+            adset_allocation_summary = None
+            if allocation is not None:
+                try:
+                    adset_allocation, adset_allocation_summary = optimize_adset_allocation(
+                        all_actions,
+                        allocation,
+                    )
+                except Exception as adset_exc:
+                    adset_allocation_summary = {
+                        "status": "unavailable",
+                        "reason": str(adset_exc),
+                    }
+
             operational_plan = build_operational_action_plan(
                 best,
                 allocation=allocation,
+                adset_allocation=adset_allocation,
                 source_df=df,
                 horizon_days=config.horizon_days,
             )
@@ -292,6 +307,7 @@ def main():
                     ),
                     "temporal_model_decision": model_decision,
                     "allocation_summary": allocation_summary,
+                    "adset_allocation_summary": adset_allocation_summary,
                     "deep_decision_source": deep_decision_source,
                     "deep_guardrail": deep_guardrail,
                 },
@@ -301,6 +317,8 @@ def main():
             extra_json = {}
             if allocation is not None:
                 extra_tables["allocation"] = allocation
+            if adset_allocation is not None and not adset_allocation.empty:
+                extra_tables["adset_allocation"] = adset_allocation
             if operational_plan is not None and not operational_plan.empty:
                 extra_tables["operational_action_plan"] = operational_plan
             if funnel_detail is not None and not funnel_detail.empty:
@@ -311,6 +329,8 @@ def main():
                 extra_json["temporal_model_decision"] = model_decision
             if allocation_summary is not None:
                 extra_json["allocation_summary"] = allocation_summary
+            if adset_allocation_summary is not None:
+                extra_json["adset_allocation_summary"] = adset_allocation_summary
             if diagnostics is not None:
                 extra_tables["posterior_predictive_checks"] = result.ppc_detail
                 if result.guardrail != "none":
@@ -558,6 +578,25 @@ def main():
                     hide_index=True,
                 )
                 st.caption(allocation_summary["important_limitation"])
+                if adset_allocation is not None and not adset_allocation.empty:
+                    st.markdown("**Alocação reconciliada de conjuntos**")
+                    st.dataframe(
+                        adset_allocation[
+                            [
+                                "campaign_id",
+                                "entity_id",
+                                "adset_name",
+                                "action_multiplier",
+                                "expected_spend",
+                                "parent_campaign_budget_limit",
+                                "expected_profit",
+                                "expected_revenue",
+                                "p_incremental_profit_positive",
+                            ]
+                        ],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
         with tab_validation:
             if model_comparison is None:
                 st.info(
