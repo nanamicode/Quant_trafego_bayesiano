@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 
 from .deep_analysis import run_deep_analysis
 from .engine import EngineConfig
@@ -99,6 +100,7 @@ def main():
         extra={
             "quality_score": quality.score,
             "quality_warnings": list(quality.warnings),
+            "quality_report": asdict(quality),
             "mcmc_diagnostics": result.diagnostics.__dict__,
             "ppc_summary": result.ppc_summary.__dict__,
         },
