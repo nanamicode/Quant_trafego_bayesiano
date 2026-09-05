@@ -20,7 +20,7 @@ jobs:
       - name: Bootstrap lockfile on main
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'github-actions[bot]'
         run: |
-          if git diff --quiet -- uv.lock; then
+          if [ -z "$(git status --porcelain -- uv.lock)" ]; then
             echo "Lockfile already current."
           else
             git config user.name "github-actions[bot]"
