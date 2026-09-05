@@ -7,6 +7,7 @@ import pandas as pd
 
 from .dynamic import analyze_state_space_temporal
 from .model import BetaPosterior, aggregate, shrink_to, simulate_action, update_beta
+from .quality import assess_data_quality
 from .response import ResponseEstimate, estimate_response
 from .temporal import analyze_temporal
 
@@ -45,6 +46,10 @@ class EngineConfig:
     experiment_max_multiplier: float = 2.00
     min_p_profit_for_scale: float = 0.60
     min_p_incremental_for_scale: float = 0.55
+    min_quality_for_scale: float = 0.55
+    cautious_quality_threshold: float = 0.75
+    cautious_quality_max_multiplier: float = 1.20
+    quality_confidence_weight: float = 0.35
 
     global_ctr_strength: float = 2500
     global_cvr_strength: float = 250
@@ -80,7 +85,18 @@ class BayesTrafficEngine:
             raise ValueError("Há datas inválidas na planilha.")
 
         for col in ["impressions", "clicks", "conversions", "spend", "revenue"]:
-            out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0.0)
+            raw = out[col]
+            parsed = pd.to_numeric(raw, errors="coerce")
+            invalid = (
+                parsed.isna()
+                & raw.notna()
+                & raw.astype(str).str.strip().ne("")
+            )
+            if invalid.any():
+                raise ValueError(
+                    f"A coluna {col} contém valores não numéricos inválidos."
+                )
+            out[col] = parsed.fillna(0.0)
             if (out[col] < 0).any():
                 raise ValueError(f"A coluna {col} contém valores negativos.")
 
@@ -296,6 +312,8 @@ class BayesTrafficEngine:
         posterior_overrides: dict | None = None,
     ):
         df = self.validate(df)
+        quality_report = assess_data_quality(df)
+        quality_factor = float(np.clip(quality_report.score / 100.0, 0.0, 1.0))
         rows = []
 
         global_fallback = self._global_posteriors(df)
@@ -417,6 +435,8 @@ class BayesTrafficEngine:
             )
 
         all_actions = pd.DataFrame(rows)
+        all_actions["data_quality_score"] = quality_report.score
+        all_actions["data_quality_factor"] = quality_factor
 
         tier_caps = {
             "predictive": self.config.predictive_max_multiplier,
@@ -425,14 +445,27 @@ class BayesTrafficEngine:
         }
         caps = all_actions["evidence_tier"].map(tier_caps).fillna(
             self.config.predictive_max_multiplier
-        )
+        ).to_numpy(dtype=float)
+
+        if quality_factor < self.config.cautious_quality_threshold:
+            caps = np.minimum(
+                caps,
+                self.config.cautious_quality_max_multiplier,
+            )
+
         scale = all_actions["action_multiplier"] > 1.0
+        all_actions["policy_max_multiplier"] = caps
         all_actions["policy_eligible"] = (
-            all_actions["action_multiplier"] <= caps + 1e-12
+            all_actions["action_multiplier"].to_numpy(dtype=float)
+            <= caps + 1e-12
         ) & (
             (~scale)
             | (
-                (all_actions["p_profit"] >= self.config.min_p_profit_for_scale)
+                (quality_factor >= self.config.min_quality_for_scale)
+                & (
+                    all_actions["p_profit"]
+                    >= self.config.min_p_profit_for_scale
+                )
                 & (
                     all_actions["p_incremental_profit_positive"]
                     >= self.config.min_p_incremental_for_scale
@@ -478,7 +511,22 @@ class BayesTrafficEngine:
             + 0.20 * best["p_roas_target"]
             + 0.15 * (1.0 - best["instability_score"])
         )
-        best["decision_confidence"] = np.clip(confidence, 0.0, 1.0)
+        quality_multiplier = (
+            1.0
+            - self.config.quality_confidence_weight
+            * (1.0 - quality_factor)
+        )
+        best["decision_confidence_raw"] = np.clip(
+            confidence,
+            0.0,
+            1.0,
+        )
+        best["decision_confidence"] = np.clip(
+            confidence * quality_multiplier,
+            0.0,
+            1.0,
+        )
+        best["data_quality_score"] = quality_report.score
         best["opportunity_score"] = (
             best["risk_adjusted_utility"]
             * (0.25 + 0.75 * best["decision_confidence"])
