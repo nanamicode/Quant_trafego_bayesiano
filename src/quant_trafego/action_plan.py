@@ -440,51 +440,49 @@ def derive_account_budget_target(
 
     current_daily = None
     basis = None
+    configured_budget_daily = None
 
-    if (
-        source_df is not None
-        and "campaign_daily_budget" in source_df.columns
-        and "campaign_id" in source_df.columns
-    ):
-        tmp = source_df.copy()
-        if "date" in tmp.columns:
-            tmp["date"] = pd.to_datetime(
-                tmp["date"],
+    if source_df is not None:
+        if (
+            "campaign_daily_budget" in source_df.columns
+            and "campaign_id" in source_df.columns
+        ):
+            tmp_budget = source_df.copy()
+            if "date" in tmp_budget.columns:
+                tmp_budget["date"] = pd.to_datetime(
+                    tmp_budget["date"],
+                    errors="coerce",
+                )
+                latest = tmp_budget["date"].max()
+                if pd.notna(latest):
+                    tmp_budget = tmp_budget[
+                        tmp_budget["date"] == latest
+                    ]
+            tmp_budget["campaign_daily_budget"] = pd.to_numeric(
+                tmp_budget["campaign_daily_budget"],
                 errors="coerce",
             )
-            latest = tmp["date"].max()
-            if pd.notna(latest):
-                tmp = tmp[
-                    tmp["date"] == latest
+            budgets = (
+                tmp_budget.dropna(
+                    subset=[
+                        "campaign_id",
+                        "campaign_daily_budget",
+                    ]
+                )
+                .groupby("campaign_id")[
+                    "campaign_daily_budget"
                 ]
-
-        tmp["campaign_daily_budget"] = pd.to_numeric(
-            tmp["campaign_daily_budget"],
-            errors="coerce",
-        )
-        budgets = (
-            tmp.dropna(
-                subset=[
-                    "campaign_id",
-                    "campaign_daily_budget",
-                ]
+                .median()
             )
-            .groupby(
-                "campaign_id"
-            )["campaign_daily_budget"]
-            .median()
-        )
-        budgets = budgets[
-            np.isfinite(budgets)
-            & (budgets >= 0)
-        ]
-        if not budgets.empty:
-            current_daily = float(
-                budgets.sum()
-            )
-            basis = "sum_current_campaign_daily_budgets"
+            budgets = budgets[
+                np.isfinite(budgets)
+                & (budgets >= 0)
+            ]
+            if not budgets.empty:
+                configured_budget_daily = float(
+                    budgets.sum()
+                )
 
-    if current_daily is None and source_df is not None:
         if (
             "date" in source_df.columns
             and "spend" in source_df.columns
@@ -499,32 +497,36 @@ def derive_account_budget_target(
                 errors="coerce",
             )
             tmp = tmp.dropna(
-                subset=[
-                    "date",
-                    "spend",
-                ]
+                subset=["date", "spend"]
             )
-            daily = (
-                tmp.groupby(
-                    "date",
-                    as_index=False,
-                )["spend"]
-                .sum()
-                .sort_values("date")
-                .tail(
-                    max(
+            if not tmp.empty:
+                latest = tmp["date"].max()
+                cutoff = latest - pd.Timedelta(
+                    days=max(
+                        int(recent_spend_days),
+                        1,
+                    ) - 1
+                )
+                recent = tmp[
+                    tmp["date"] >= cutoff
+                ]
+                spend = float(
+                    recent["spend"].sum()
+                )
+                current_daily = (
+                    spend
+                    / max(
                         int(recent_spend_days),
                         1,
                     )
                 )
-            )
-            if not daily.empty:
-                current_daily = float(
-                    daily["spend"].mean()
-                )
                 basis = (
                     f"recent_{int(recent_spend_days)}d_account_daily_spend"
                 )
+
+    if current_daily is None and configured_budget_daily is not None:
+        current_daily = configured_budget_daily
+        basis = "configured_campaign_budget_fallback"
 
     if current_daily is None:
         historical_days = max(
@@ -562,6 +564,7 @@ def derive_account_budget_target(
     return {
         "action_multiplier": multiplier,
         "amount_basis": basis,
+        "configured_daily_budget": configured_budget_daily,
         "current_daily_amount": current_daily,
         "recommended_daily_amount": recommended_daily,
         "daily_amount_change": (
@@ -1260,6 +1263,7 @@ def build_operational_action_plan(
 
     action_rank = {
         "DESLIGAR": 0,
+        "BLOQUEADO_PELO_PAI": 0,
         "REDUZIR": 1,
         "REDUZIR_EXPOSICAO": 1,
         "AUMENTAR": 2,
