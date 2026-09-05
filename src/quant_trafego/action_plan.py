@@ -768,11 +768,12 @@ def build_operational_action_plan(
                 source_df=source_df,
                 recent_spend_days=cfg.recent_spend_days,
             )
-            parent_account_recommended_daily = float(
-                account_budget_target[
-                    "recommended_daily_amount"
-                ]
-            )
+            if account_budget_target is not None:
+                parent_account_recommended_daily = float(
+                    account_budget_target[
+                        "recommended_daily_amount"
+                    ]
+                )
         else:
             current_daily, amount_basis, direct_budget = (
                 _budget_reference(
