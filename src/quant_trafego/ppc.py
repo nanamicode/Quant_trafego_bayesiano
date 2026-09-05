@@ -53,15 +53,19 @@ def posterior_predictive_checks(
     rng = np.random.default_rng(seed)
     records: list[dict] = []
 
-    use_entity = (
-        "ctr_p_entity" in idata.posterior
-        and "cvr_p_entity" in idata.posterior
-        and len(daily) == idata.posterior["ctr_p_entity"].sizes.get("entity", -1)
-    )
+    try:
+        ctr_entity = idata.posterior["ctr_p_entity"]
+        cvr_entity = idata.posterior["cvr_p_entity"]
+        entity_size = ctr_entity.sizes.get("entity", -1)
+        use_entity = len(daily) == entity_size
+    except Exception:
+        ctr_entity = None
+        cvr_entity = None
+        use_entity = False
 
     if use_entity:
-        ctr_source = idata.posterior["ctr_p_entity"]
-        cvr_source = idata.posterior["cvr_p_entity"]
+        ctr_source = ctr_entity
+        cvr_source = cvr_entity
         iterator = [
             (i, row)
             for i, row in enumerate(daily.itertuples(index=False))
