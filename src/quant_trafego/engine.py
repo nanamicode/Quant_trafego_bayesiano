@@ -61,6 +61,8 @@ class EngineConfig:
     cautious_quality_threshold: float = 0.75
     cautious_quality_max_multiplier: float = 1.20
     quality_confidence_weight: float = 0.35
+    revenue_tiebreak: bool = True
+    revenue_tiebreak_tolerance: float = 0.02
 
     global_ctr_strength: float = 2500
     global_cvr_strength: float = 250
@@ -172,6 +174,52 @@ class BayesTrafficEngine:
             digest_size=4,
         ).digest()
         return int.from_bytes(digest, "little") % 100_000
+
+    def _select_profit_first_growth_indices(
+        self,
+        actions: pd.DataFrame,
+    ) -> list[int]:
+        selected: list[int] = []
+        for _, group in actions.groupby(
+            ["level", "entity_id"],
+            sort=False,
+        ):
+            max_utility = float(
+                group["risk_adjusted_utility"].max()
+            )
+            if not self.config.revenue_tiebreak:
+                selected.append(
+                    int(
+                        group["risk_adjusted_utility"].idxmax()
+                    )
+                )
+                continue
+
+            tolerance = (
+                float(
+                    self.config.revenue_tiebreak_tolerance
+                )
+                * max(
+                    abs(max_utility),
+                    1.0,
+                )
+            )
+            near = group[
+                group["risk_adjusted_utility"]
+                >= max_utility - tolerance
+            ]
+            chosen = near.sort_values(
+                [
+                    "expected_revenue",
+                    "risk_adjusted_utility",
+                ],
+                ascending=[
+                    False,
+                    False,
+                ],
+            ).index[0]
+            selected.append(int(chosen))
+        return selected
 
     @staticmethod
     def _action_offset(multiplier: float) -> int:
@@ -633,23 +681,41 @@ class BayesTrafficEngine:
             )
         )
 
-        raw_idx = all_actions.groupby(
-            ["level", "entity_id"]
-        )["risk_adjusted_utility"].idxmax()
+        all_actions["selection_objective"] = (
+            "risk_adjusted_profit_first_revenue_secondary"
+            if self.config.revenue_tiebreak
+            else "risk_adjusted_profit"
+        )
+        all_actions["revenue_tiebreak_tolerance"] = float(
+            self.config.revenue_tiebreak_tolerance
+        )
+
+        raw_idx = self._select_profit_first_growth_indices(
+            all_actions
+        )
         raw_best = all_actions.loc[
             raw_idx,
-            ["level", "entity_id", "action_multiplier", "risk_adjusted_utility"],
+            [
+                "level",
+                "entity_id",
+                "action_multiplier",
+                "risk_adjusted_utility",
+                "expected_revenue",
+            ],
         ].rename(
             columns={
                 "action_multiplier": "unconstrained_best_multiplier",
                 "risk_adjusted_utility": "unconstrained_best_utility",
+                "expected_revenue": "unconstrained_best_revenue",
             }
         )
 
-        eligible = all_actions[all_actions["policy_eligible"]].copy()
-        idx = eligible.groupby(
-            ["level", "entity_id"]
-        )["risk_adjusted_utility"].idxmax()
+        eligible = all_actions[
+            all_actions["policy_eligible"]
+        ].copy()
+        idx = self._select_profit_first_growth_indices(
+            eligible
+        )
         best = all_actions.loc[idx].copy().reset_index(drop=True)
         best = best.merge(
             raw_best,
