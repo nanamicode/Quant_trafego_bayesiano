@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from .engine import BayesTrafficEngine, EngineConfig
 from .funnel import hierarchical_funnel_diagnostics
@@ -73,7 +74,7 @@ def main():
     write_reports(all_actions, best, args.output)
     if not funnel_detail.empty:
         funnel_detail.to_csv(
-            __import__("pathlib").Path(args.output) / "funnel_diagnostics.csv",
+            Path(args.output) / "funnel_diagnostics.csv",
             index=False,
         )
 
