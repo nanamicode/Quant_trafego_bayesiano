@@ -8,7 +8,7 @@ from .action_plan import build_operational_action_plan, derive_account_budget_ta
 from .engine import BayesTrafficEngine, EngineConfig
 from .funnel import hierarchical_funnel_diagnostics
 from .hardware import detect_hardware
-from .io import filter_active, load_ads_file
+from .io import filter_decision_rows, infer_decision_universe, load_ads_file
 from .optimization import optimize_adset_allocation, optimize_campaign_allocation
 from .portfolio import optimize_campaign_portfolio
 from .quality import assess_data_quality
@@ -48,15 +48,33 @@ def main():
     parser.add_argument(
         "--include-inactive",
         action="store_true",
-        help="Inclui entidades inativas quando houver coluna de status.",
+        help="Gera decisões também para entidades inativas. O histórico inativo sempre entra como contexto.",
     )
     args = parser.parse_args()
 
     df = load_ads_file(args.input)
+    decision_entities = None
+    operational_df = df
     if not args.include_inactive:
-        df = filter_active(df)
+        universe = infer_decision_universe(df)
+        decision_entities = {
+            "campaign": universe.campaign_ids,
+            "adset": universe.adset_ids,
+            "ad": universe.ad_ids,
+        }
+        operational_df = filter_decision_rows(
+            df,
+            universe,
+        )
+        print(
+            "Contexto completo preservado | "
+            f"ativos detectados por {universe.detection_method}: "
+            f"{len(universe.campaign_ids)} campanhas, "
+            f"{len(universe.adset_ids)} conjuntos, "
+            f"{len(universe.ad_ids)} anúncios."
+        )
 
-    quality = assess_data_quality(df)
+    quality = assess_data_quality(operational_df)
     hw = detect_hardware()
     draws = args.draws if args.draws > 0 else hw.recommended_draws
 
@@ -79,10 +97,13 @@ def main():
             use_weekly_seasonality=not args.disable_weekly_seasonality,
         )
     engine = BayesTrafficEngine(config)
-    all_actions, best = engine.run(df)
+    all_actions, best = engine.run(
+        df,
+        decision_entities=decision_entities,
+    )
     account_budget_target = derive_account_budget_target(
         best,
-        source_df=df,
+        source_df=operational_df,
         horizon_days=config.horizon_days,
     )
     allocation = None
