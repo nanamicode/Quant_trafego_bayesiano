@@ -63,6 +63,8 @@ def compare_temporal_models(
     metrics = [
         "profit_brier",
         "roas_target_brier",
+        "profit_ece",
+        "roas_ece",
         "profit_interval_score_90",
         "profit_mae",
     ]
