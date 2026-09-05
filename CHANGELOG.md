@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.0
+
+- camada operacional responde aumentar, reduzir, manter, desligar e candidatos a duplicação;
+- operational_action_plan.csv e operational_action_plan.md como saídas principais;
+- alocação global de campanha substitui ótimo independente no plano operacional;
+- valores diários usam orçamento explícito quando disponível e spend recente como fallback;
+- campanha/conjunto/anúncio e respectivos nomes são preservados nas decisões;
+- lucro continua objetivo primário; faturamento desempata apenas soluções próximas do ótimo;
+- desempate por faturamento implementado também nos otimizadores MILP e CVaR;
+- receita incremental vs manter passa a ser reportada;
+- duplicação é separada de scale: TESTAR_DUPLICACAO para evidência observacional e DUPLICAR para evidência experimental calibrada;
+- margem de contribuição passa a ser obrigatória na UI e nos CLIs de análise;
+- template CSV operacional e guia de uso em docs/OPERATIONAL_USAGE.md;
+- interface coloca Plano operacional como primeira aba.
+
 ## 0.8.0
 
 - contrafactuais de orçamento passam a compartilhar os mesmos mundos latentes posteriores;
