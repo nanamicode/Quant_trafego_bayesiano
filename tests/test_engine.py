@@ -45,3 +45,20 @@ def test_engine_accepts_mcmc_posterior_override():
     all_actions, _ = engine.run(df, posterior_overrides=overrides)
     account = all_actions[all_actions["level"] == "account"]
     assert set(account["posterior_source"]) == {"mcmc"}
+
+
+def test_policy_distinguishes_unconstrained_and_approved_actions():
+    df = pd.read_csv("examples/example_data.csv")
+    engine = BayesTrafficEngine(
+        EngineConfig(
+            draws=400,
+            seed=8,
+            predictive_max_multiplier=1.0,
+            observational_max_multiplier=1.0,
+            experiment_max_multiplier=1.0,
+        )
+    )
+    _, best = engine.run(df)
+    assert (best["action_multiplier"] <= 1.0).all()
+    assert "unconstrained_best_multiplier" in best.columns
+    assert "policy_constrained" in best.columns
