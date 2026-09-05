@@ -744,6 +744,78 @@ def build_operational_action_plan(
             sort=False,
         )
 
+    campaign_rows = best[
+        best["level"] == "campaign"
+    ].copy()
+    campaign_rows["entity_id"] = (
+        campaign_rows["entity_id"].astype(str)
+    )
+    campaign_multiplier_map = {
+        str(row["entity_id"]): float(row["action_multiplier"])
+        for _, row in campaign_rows.iterrows()
+    }
+
+    adset_rows = best[
+        best["level"] == "adset"
+    ].copy()
+    adset_rows["entity_id"] = (
+        adset_rows["entity_id"].astype(str)
+    )
+    adset_multiplier_map = {
+        str(row["entity_id"]): float(row["action_multiplier"])
+        for _, row in adset_rows.iterrows()
+    }
+
+    account_capital_ceiling_daily = (
+        float(
+            account_budget_target[
+                "recommended_daily_amount"
+            ]
+        )
+        if account_budget_target is not None
+        else np.nan
+    )
+    account_deployed_daily = float(
+        campaign_rows["expected_spend"].fillna(0.0).sum()
+        / max(int(horizon_days), 1)
+    )
+    account_unallocated_daily = (
+        max(
+            account_capital_ceiling_daily
+            - account_deployed_daily,
+            0.0,
+        )
+        if np.isfinite(
+            account_capital_ceiling_daily
+        )
+        else np.nan
+    )
+
+    campaign_selected_horizon_spend = {
+        str(row["entity_id"]): max(
+            float(row.get("expected_spend", 0.0)),
+            0.0,
+        )
+        for _, row in campaign_rows.iterrows()
+    }
+    adset_selected_by_campaign = (
+        adset_rows.assign(
+            campaign_id=adset_rows[
+                "campaign_id"
+            ].astype(str)
+        )
+        .groupby("campaign_id")[
+            "expected_spend"
+        ]
+        .sum()
+        .to_dict()
+        if (
+            not adset_rows.empty
+            and "campaign_id" in adset_rows.columns
+        )
+        else {}
+    )
+
     campaign_daily_targets: dict[str, float] = {}
     for _, campaign_row in best[
         best["level"] == "campaign"
@@ -760,6 +832,7 @@ def build_operational_action_plan(
             account_budget_target=account_budget_target,
             source_df=source_df,
             recent_spend_days=cfg.recent_spend_days,
+            horizon_days=horizon_days,
         )
         campaign_daily_targets[
             str(campaign_row["entity_id"])
@@ -792,12 +865,11 @@ def build_operational_action_plan(
                 account_budget_target=account_budget_target,
                 source_df=source_df,
                 recent_spend_days=cfg.recent_spend_days,
+                horizon_days=horizon_days,
             )
             if account_budget_target is not None:
-                parent_account_recommended_daily = float(
-                    account_budget_target[
-                        "recommended_daily_amount"
-                    ]
+                parent_account_recommended_daily = (
+                    account_deployed_daily
                 )
         else:
             current_daily, amount_basis, direct_budget = (
@@ -819,53 +891,104 @@ def build_operational_action_plan(
             campaign_id = str(
                 row.get("campaign_id", "")
             )
-            parent_limit = pd.to_numeric(
-                pd.Series(
-                    [
-                        row.get(
-                            "parent_campaign_budget_limit",
-                            np.nan,
-                        )
-                    ]
+            expected_spend = max(
+                float(
+                    row.get(
+                        "expected_spend",
+                        0.0,
+                    )
                 ),
-                errors="coerce",
-            ).iloc[0]
-            expected_spend = float(
-                row.get(
-                    "expected_spend",
-                    0.0,
+                0.0,
+            )
+            parent_campaign_recommended_daily = (
+                campaign_daily_targets.get(
+                    campaign_id,
+                    np.nan,
                 )
             )
-            if (
-                campaign_id in campaign_daily_targets
-                and np.isfinite(parent_limit)
-            ):
-                parent_campaign_recommended_daily = (
-                    campaign_daily_targets[
-                        campaign_id
-                    ]
+            parent_horizon = (
+                campaign_selected_horizon_spend.get(
+                    campaign_id,
+                    np.nan,
                 )
-                if parent_limit > 1e-9:
-                    parent_campaign_spend_share = float(
+            )
+            if np.isfinite(parent_horizon):
+                parent_campaign_spend_share = (
+                    float(
                         np.clip(
                             expected_spend
-                            / float(parent_limit),
+                            / parent_horizon,
                             0.0,
                             1.0,
                         )
                     )
-                else:
-                    parent_campaign_spend_share = 0.0
-
-                recommended_daily = (
-                    parent_campaign_recommended_daily
-                    * parent_campaign_spend_share
+                    if parent_horizon > 1e-9
+                    else 0.0
                 )
                 nested_budget_reconciled = True
+
+            recommended_daily = (
+                expected_spend
+                / max(int(horizon_days), 1)
+            )
+
+        model_suggested_action = _capital_action(
+            level,
+            multiplier,
+            tolerance=cfg.hold_tolerance,
+        )
+        parent_campaign_action = None
+        parent_adset_action = None
+        blocked_by_parent = False
+
+        if level in {"adset", "ad"}:
+            campaign_key = str(
+                row.get("campaign_id", "")
+            )
+            campaign_multiplier = (
+                campaign_multiplier_map.get(
+                    campaign_key
+                )
+            )
+            if campaign_multiplier is not None:
+                parent_campaign_action = _capital_action(
+                    "campaign",
+                    campaign_multiplier,
+                    tolerance=cfg.hold_tolerance,
+                )
+                blocked_by_parent = (
+                    campaign_multiplier <= 1e-9
+                )
+
+        if level == "ad":
+            adset_key = str(
+                row.get("adset_id", "")
+            )
+            adset_multiplier = (
+                adset_multiplier_map.get(
+                    adset_key
+                )
+            )
+            if adset_multiplier is not None:
+                parent_adset_action = _capital_action(
+                    "adset",
+                    adset_multiplier,
+                    tolerance=cfg.hold_tolerance,
+                )
+                blocked_by_parent = (
+                    blocked_by_parent
+                    or adset_multiplier <= 1e-9
+                )
+
+            # Ads do not own a Meta budget. Keep current attributed spend as
+            # context, but do not fabricate an executable R$/day target.
+            recommended_daily = np.nan
 
         delta_daily = (
             recommended_daily
             - current_daily
+            if np.isfinite(recommended_daily)
+            else np.nan
         )
         current_horizon = (
             current_daily
@@ -876,17 +999,30 @@ def build_operational_action_plan(
             * int(horizon_days)
         )
 
-        capital_action = _capital_action_from_amounts(
-            level,
-            current_daily,
-            recommended_daily,
-            tolerance=cfg.hold_tolerance,
-        )
-        operational_multiplier = (
-            recommended_daily / current_daily
-            if current_daily > 1e-9
-            else np.nan
-        )
+        if level == "ad":
+            capital_action = (
+                "BLOQUEADO_PELO_PAI"
+                if blocked_by_parent
+                else model_suggested_action
+            )
+            operational_multiplier = np.nan
+        else:
+            capital_action = _capital_action_from_amounts(
+                level,
+                current_daily,
+                recommended_daily,
+                tolerance=cfg.hold_tolerance,
+            )
+            operational_multiplier = (
+                recommended_daily / current_daily
+                if (
+                    current_daily > 1e-9
+                    and np.isfinite(
+                        recommended_daily
+                    )
+                )
+                else np.nan
+            )
         (
             duplicate_action,
             additional_copies,
@@ -896,40 +1032,69 @@ def build_operational_action_plan(
             row,
             cfg,
         )
+        if blocked_by_parent:
+            duplicate_action = "NAO"
+            additional_copies = 0
+            extra_capacity_fraction = 0.0
+            duplicate_note = (
+                "Duplicação bloqueada porque o nível pai não recebeu capital."
+            )
+
+        configured_daily_budget = (
+            _configured_daily_budget(
+                row,
+                source_df,
+            )
+        )
 
         execution_note = ""
         if level == "ad":
-            if capital_action == "REDUZIR_EXPOSICAO":
+            if blocked_by_parent:
                 execution_note = (
-                    "Anúncio não possui orçamento próprio no Meta. Reduza sua "
-                    "exposição via conjunto/campanha ou desligue se a estrutura "
-                    "não permitir controle de entrega."
+                    "O modelo do anúncio é apenas diagnóstico: a campanha ou "
+                    "o conjunto pai foi desligado pelo plano de capital, então "
+                    "nenhum scale individual deve ser executado."
+                )
+            elif capital_action == "REDUZIR_EXPOSICAO":
+                execution_note = (
+                    "Anúncio não possui orçamento próprio. Reduza sua participação "
+                    "dentro da capacidade aprovada do conjunto/campanha."
                 )
             elif capital_action == "PRIORIZAR_MAIS":
                 execution_note = (
-                    "Anúncio não possui orçamento próprio. Direcione mais "
-                    "capacidade ao conjunto/campanha que o contém ou use "
-                    "duplicação apenas conforme o campo de duplicação."
+                    "Priorize relativamente este anúncio dentro do orçamento "
+                    "já aprovado para o conjunto/campanha; não interprete como "
+                    "um novo orçamento independente."
+                )
+            else:
+                execution_note = (
+                    "Decisão de exposição relativa. O dinheiro executável fica "
+                    "nos níveis campanha/conjunto."
                 )
         elif nested_budget_reconciled:
             execution_note = (
-                "Valor absoluto reconciliado com o capital aprovado para a "
-                "campanha pai; o multiplicador do modelo é usado dentro do "
-                "solver, mas o R$/dia final respeita o orçamento do pai."
+                "Cenário selecionado pelo solver dentro do teto da campanha pai; "
+                "o R$/dia corresponde exatamente ao spend usado nas métricas "
+                "de lucro/risco desta linha."
             )
         elif account_budget_reconciled:
             execution_note = (
-                "Valor absoluto reconciliado com o envelope de capital aprovado "
-                "no nível da conta; a soma das campanhas não ultrapassa esse teto."
+                "Cenário selecionado pelo portfólio dentro do teto de capital "
+                "da conta; o R$/dia corresponde ao spend usado nas métricas."
+            )
+        elif amount_basis.startswith("recent_"):
+            execution_note = (
+                "Baseline = gasto diário recente efetivamente entregue. O orçamento "
+                "configurado, quando disponível, é mostrado separadamente."
             )
         elif direct_budget:
             execution_note = (
-                "Valor calculado sobre orçamento diário informado na planilha."
+                "Sem entrega recente suficiente; orçamento configurado usado apenas "
+                "como fallback de baseline."
             )
         else:
             execution_note = (
-                "Valor calculado sobre gasto diário médio observado; trate como "
-                "meta de spend se a planilha não contiver orçamento diário."
+                "Baseline histórica usada por falta de entrega recente suficiente."
             )
 
         expected_incremental_profit = float(
@@ -972,15 +1137,22 @@ def build_operational_action_plan(
                 "ad_name": row.get("ad_name"),
                 "entity_id": str(row["entity_id"]),
                 "capital_action": capital_action,
+                "model_suggested_action": model_suggested_action,
+                "blocked_by_parent": blocked_by_parent,
+                "parent_campaign_action": parent_campaign_action,
+                "parent_adset_action": parent_adset_action,
                 "action_multiplier": multiplier,
                 "operational_amount_multiplier": operational_multiplier,
                 "account_budget_reconciled": account_budget_reconciled,
                 "parent_account_recommended_daily_amount": parent_account_recommended_daily,
+                "parent_account_capital_ceiling_daily_amount": account_capital_ceiling_daily,
+                "parent_account_unallocated_daily_amount": account_unallocated_daily,
                 "parent_account_spend_share": parent_account_spend_share,
                 "nested_budget_reconciled": nested_budget_reconciled,
                 "parent_campaign_recommended_daily_amount": parent_campaign_recommended_daily,
                 "parent_campaign_spend_share": parent_campaign_spend_share,
                 "amount_basis": amount_basis,
+                "configured_daily_budget": configured_daily_budget,
                 "direct_budget_available": direct_budget,
                 "current_daily_amount": current_daily,
                 "recommended_daily_amount": recommended_daily,
