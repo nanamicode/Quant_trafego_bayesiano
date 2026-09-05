@@ -16,6 +16,7 @@ from .model import (
 )
 from .quality import assess_data_quality
 from .response import ResponseEstimate, estimate_response
+from .seasonality import analyze_weekly_seasonality
 from .temporal import analyze_temporal
 
 
@@ -48,6 +49,9 @@ class EngineConfig:
     use_temporal: bool = True
     temporal_model: str = "derivative"
     use_empirical_response: bool = True
+    use_weekly_seasonality: bool = True
+    seasonality_half_life_days: float = 56.0
+    seasonality_min_days: int = 21
     predictive_max_multiplier: float = 1.20
     observational_max_multiplier: float = 1.50
     experiment_max_multiplier: float = 2.00
@@ -208,6 +212,29 @@ class BayesTrafficEngine:
         stats = aggregate(df)
         temporal = self._temporal_signal(df, level, entity_id)
 
+        if self.config.use_weekly_seasonality:
+            weekly = analyze_weekly_seasonality(
+                df,
+                half_life_days=self.config.seasonality_half_life_days,
+                min_days=self.config.seasonality_min_days,
+            )
+            last_date = stats["daily"]["date"].max()
+            ctr_weekly_mean, ctr_weekly_sd = weekly.ctr.future_shift(
+                last_date,
+                self.config.horizon_days,
+            )
+            cvr_weekly_mean, cvr_weekly_sd = weekly.cvr.future_shift(
+                last_date,
+                self.config.horizon_days,
+            )
+            weekly_confidence = weekly.confidence
+        else:
+            ctr_weekly_mean = 0.0
+            ctr_weekly_sd = 0.0
+            cvr_weekly_mean = 0.0
+            cvr_weekly_sd = 0.0
+            weekly_confidence = 0.0
+
         ctr_mean = temporal.ctr.effective_mean if self.config.use_temporal else 0.0
         ctr_sd = temporal.ctr.effective_sd if self.config.use_temporal else 0.0
         cvr_mean = temporal.cvr.effective_mean if self.config.use_temporal else 0.0
@@ -239,6 +266,10 @@ class BayesTrafficEngine:
             temporal_cvr_slope_sd=cvr_sd,
             response_elasticity_mean=response_estimate.elasticity_mean,
             response_elasticity_sd=response_estimate.elasticity_sd,
+            seasonal_ctr_shift_mean=ctr_weekly_mean,
+            seasonal_ctr_shift_sd=ctr_weekly_sd,
+            seasonal_cvr_shift_mean=cvr_weekly_mean,
+            seasonal_cvr_shift_sd=cvr_weekly_sd,
         )
 
         sims = []
@@ -268,6 +299,10 @@ class BayesTrafficEngine:
                     response_elasticity_mean=response_estimate.elasticity_mean,
                     response_elasticity_sd=response_estimate.elasticity_sd,
                     response_confidence=response_confidence,
+                    seasonal_ctr_shift_mean=ctr_weekly_mean,
+                    seasonal_ctr_shift_sd=ctr_weekly_sd,
+                    seasonal_cvr_shift_mean=cvr_weekly_mean,
+                    seasonal_cvr_shift_sd=cvr_weekly_sd,
                     context=context,
                 )
             )
@@ -335,6 +370,11 @@ class BayesTrafficEngine:
                 "response_independent_spend_sd": response_estimate.independent_spend_sd,
                 "response_effective_days": response_estimate.effective_days,
                 "response_controls": response_estimate.controls,
+                "weekly_seasonality_confidence": weekly_confidence,
+                "future_ctr_weekly_logit_shift": ctr_weekly_mean,
+                "future_ctr_weekly_shift_sd": ctr_weekly_sd,
+                "future_cvr_weekly_logit_shift": cvr_weekly_mean,
+                "future_cvr_weekly_shift_sd": cvr_weekly_sd,
                 "p_diminishing_returns_proxy": (
                     response_estimate.diminishing_returns_probability_proxy
                 ),
