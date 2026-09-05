@@ -1,0 +1,13 @@
+numpy>=1.26
+pandas>=2.0
+scipy>=1.11
+openpyxl>=3.1
+
+# Stack opcional para a fase probabilística profunda:
+# pymc>=5
+# arviz>=0.18
+# numpyro
+# pymc-marketing
+# botorch
+# ax-platform
+# mabwiser
