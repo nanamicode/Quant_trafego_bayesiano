@@ -245,6 +245,7 @@ def compare_temporal_models(
         "account",
         "campaign",
     ),
+    progress_callback=None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     base = config or EngineConfig()
 
@@ -253,14 +254,48 @@ def compare_temporal_models(
         pd.DataFrame,
     ] = {}
 
-    for model in (
+    models = (
         "derivative",
         "state_space",
-    ):
+    )
+    for model_index, model in enumerate(models):
         cfg = replace(
             base,
             temporal_model=model,
         )
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "phase": "temporal_model",
+                    "event": "model_start",
+                    "model": model,
+                    "model_index": model_index,
+                    "models_total": len(models),
+                    "progress": (
+                        model_index / len(models)
+                    ),
+                }
+            )
+
+        def _fold_progress(event):
+            if progress_callback is None:
+                return
+            fold_progress = float(
+                event.get("progress", 0.0)
+            )
+            progress_callback(
+                {
+                    **event,
+                    "phase": "temporal_model",
+                    "model": model,
+                    "model_index": model_index,
+                    "models_total": len(models),
+                    "progress": (
+                        model_index + fold_progress
+                    ) / len(models),
+                }
+            )
+
         _, summary = rolling_origin_backtest(
             df,
             config=cfg,
@@ -268,8 +303,22 @@ def compare_temporal_models(
             horizon_days=horizon_days,
             step_days=step_days,
             levels=levels,
+            progress_callback=_fold_progress,
         )
         summaries[model] = summary
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "phase": "temporal_model",
+                    "event": "model_done",
+                    "model": model,
+                    "model_index": model_index,
+                    "models_total": len(models),
+                    "progress": (
+                        (model_index + 1) / len(models)
+                    ),
+                }
+            )
 
     return _promotion_from_summaries(
         summaries["derivative"],
