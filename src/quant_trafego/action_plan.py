@@ -316,6 +316,77 @@ def _budget_reference(
     )
 
 
+def _campaign_operational_amounts(
+    row: pd.Series,
+    *,
+    account_budget_target: dict | None,
+    source_df: pd.DataFrame | None,
+    recent_spend_days: int,
+) -> tuple[float, float, str, bool, bool, float]:
+    current_daily, amount_basis, direct_budget = _budget_reference(
+        row,
+        source_df,
+        recent_spend_days=recent_spend_days,
+    )
+    recommended_daily = (
+        current_daily
+        * float(row["action_multiplier"])
+    )
+    reconciled = False
+    share = np.nan
+
+    parent_limit = pd.to_numeric(
+        pd.Series(
+            [
+                row.get(
+                    "parent_account_budget_limit",
+                    np.nan,
+                )
+            ]
+        ),
+        errors="coerce",
+    ).iloc[0]
+
+    if (
+        account_budget_target is not None
+        and np.isfinite(parent_limit)
+    ):
+        if parent_limit > 1e-9:
+            share = float(
+                np.clip(
+                    float(
+                        row.get(
+                            "expected_spend",
+                            0.0,
+                        )
+                    )
+                    / float(parent_limit),
+                    0.0,
+                    1.0,
+                )
+            )
+        else:
+            share = 0.0
+        recommended_daily = (
+            float(
+                account_budget_target[
+                    "recommended_daily_amount"
+                ]
+            )
+            * share
+        )
+        reconciled = True
+
+    return (
+        current_daily,
+        recommended_daily,
+        amount_basis,
+        direct_budget,
+        reconciled,
+        share,
+    )
+
+
 def derive_account_budget_target(
     best_actions: pd.DataFrame,
     *,
@@ -512,6 +583,7 @@ def build_operational_action_plan(
     *,
     allocation: pd.DataFrame | None = None,
     adset_allocation: pd.DataFrame | None = None,
+    account_budget_target: dict | None = None,
     source_df: pd.DataFrame | None = None,
     horizon_days: int = 7,
     config: OperationalPlanConfig | None = None,
@@ -528,6 +600,14 @@ def build_operational_action_plan(
     best = best_actions.copy()
     if best.empty:
         return pd.DataFrame()
+
+    if account_budget_target is None:
+        account_budget_target = derive_account_budget_target(
+            best,
+            source_df=source_df,
+            horizon_days=horizon_days,
+            recent_spend_days=cfg.recent_spend_days,
+        )
 
     if allocation is not None and not allocation.empty:
         alloc = allocation.copy()
@@ -640,19 +720,22 @@ def build_operational_action_plan(
     for _, campaign_row in best[
         best["level"] == "campaign"
     ].iterrows():
-        campaign_current, _, _ = _budget_reference(
+        (
+            _campaign_current,
+            campaign_recommended,
+            _campaign_basis,
+            _campaign_direct,
+            _campaign_reconciled,
+            _campaign_share,
+        ) = _campaign_operational_amounts(
             campaign_row,
-            source_df,
+            account_budget_target=account_budget_target,
+            source_df=source_df,
             recent_spend_days=cfg.recent_spend_days,
         )
         campaign_daily_targets[
             str(campaign_row["entity_id"])
-        ] = (
-            campaign_current
-            * float(
-                campaign_row["action_multiplier"]
-            )
-        )
+        ] = campaign_recommended
 
     records: list[dict] = []
 
@@ -664,17 +747,41 @@ def build_operational_action_plan(
         multiplier = float(
             row["action_multiplier"]
         )
-        current_daily, amount_basis, direct_budget = (
-            _budget_reference(
+        account_budget_reconciled = False
+        parent_account_recommended_daily = np.nan
+        parent_account_spend_share = np.nan
+
+        if level == "campaign":
+            (
+                current_daily,
+                recommended_daily,
+                amount_basis,
+                direct_budget,
+                account_budget_reconciled,
+                parent_account_spend_share,
+            ) = _campaign_operational_amounts(
                 row,
-                source_df,
+                account_budget_target=account_budget_target,
+                source_df=source_df,
                 recent_spend_days=cfg.recent_spend_days,
             )
-        )
+            parent_account_recommended_daily = float(
+                account_budget_target[
+                    "recommended_daily_amount"
+                ]
+            )
+        else:
+            current_daily, amount_basis, direct_budget = (
+                _budget_reference(
+                    row,
+                    source_df,
+                    recent_spend_days=cfg.recent_spend_days,
+                )
+            )
+            recommended_daily = (
+                current_daily * multiplier
+            )
 
-        recommended_daily = (
-            current_daily * multiplier
-        )
         nested_budget_reconciled = False
         parent_campaign_recommended_daily = np.nan
         parent_campaign_spend_share = np.nan
@@ -781,6 +888,11 @@ def build_operational_action_plan(
                 "campanha pai; o multiplicador do modelo é usado dentro do "
                 "solver, mas o R$/dia final respeita o orçamento do pai."
             )
+        elif account_budget_reconciled:
+            execution_note = (
+                "Valor absoluto reconciliado com o envelope de capital aprovado "
+                "no nível da conta; a soma das campanhas não ultrapassa esse teto."
+            )
         elif direct_budget:
             execution_note = (
                 "Valor calculado sobre orçamento diário informado na planilha."
@@ -833,6 +945,9 @@ def build_operational_action_plan(
                 "capital_action": capital_action,
                 "action_multiplier": multiplier,
                 "operational_amount_multiplier": operational_multiplier,
+                "account_budget_reconciled": account_budget_reconciled,
+                "parent_account_recommended_daily_amount": parent_account_recommended_daily,
+                "parent_account_spend_share": parent_account_spend_share,
                 "nested_budget_reconciled": nested_budget_reconciled,
                 "parent_campaign_recommended_daily_amount": parent_campaign_recommended_daily,
                 "parent_campaign_spend_share": parent_campaign_spend_share,
