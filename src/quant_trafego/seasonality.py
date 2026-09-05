@@ -19,6 +19,8 @@ class WeeklyRateEffect:
         self,
         last_date,
         horizon_days: int,
+        *,
+        from_last_day: bool = False,
     ) -> tuple[float, float]:
         if (
             horizon_days <= 0
@@ -49,11 +51,18 @@ class WeeklyRateEffect:
             self.covariance,
             dtype=float,
         )
+
+        contrast = weights.copy()
+        if from_last_day:
+            contrast[
+                pd.Timestamp(last_date).dayofweek
+            ] -= 1.0
+
         mean = float(
-            weights @ means
+            contrast @ means
         )
         var = float(
-            weights @ cov @ weights
+            contrast @ cov @ contrast
         )
 
         return (
