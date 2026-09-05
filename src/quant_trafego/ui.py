@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import tempfile
 
@@ -8,6 +9,8 @@ import streamlit as st
 from quant_trafego.engine import BayesTrafficEngine, EngineConfig
 from quant_trafego.hardware import detect_hardware
 from quant_trafego.io import filter_active, load_ads_file
+from quant_trafego.model_selection import compare_temporal_models
+from quant_trafego.optimization import optimize_campaign_allocation
 from quant_trafego.quality import assess_data_quality
 from quant_trafego.reproducibility import build_run_manifest
 from quant_trafego.storage import LocalWarehouse
@@ -52,6 +55,11 @@ def main():
             ["Hierárquico rápido", "MCMC hierárquico profundo"],
             index=0,
         )
+        temporal_label = st.selectbox(
+            "Modelo temporal",
+            ["Derivada local (padrão)", "State-space (candidato)"],
+            index=0,
+        )
     with c2:
         depth = st.selectbox("Monte Carlo", list(DEPTHS), index=0)
     with c3:
@@ -78,6 +86,10 @@ def main():
         )
     with c7:
         include_inactive = st.checkbox("Incluir entidades inativas", value=False)
+        validate_temporal = st.checkbox(
+            "Validar modelos temporais fora da amostra",
+            value=True,
+        )
 
     mcmc_method = "auto"
     mcmc_draws = 1200
@@ -137,15 +149,22 @@ def main():
                 st.warning(warning)
 
             draws = DEPTHS[depth] or hw.recommended_draws
+            temporal_model = (
+                "state_space"
+                if temporal_label.startswith("State-space")
+                else "derivative"
+            )
             config = EngineConfig(
                 target_roas=float(target_roas),
                 contribution_margin=float(margin_pct) / 100.0,
                 horizon_days=int(horizon_days),
                 draws=int(draws),
                 risk_aversion=float(risk_aversion),
+                temporal_model=temporal_model,
             )
 
             diagnostics = None
+            ppc_summary = None
             if inference_mode == "MCMC hierárquico profundo":
                 st.write(
                     "Ajustando posterior hierárquico completo e conectando-o "
@@ -165,6 +184,7 @@ def main():
                 all_actions = result.all_actions
                 best = result.best_actions
                 diagnostics = result.diagnostics
+                ppc_summary = result.ppc_summary
             else:
                 st.write(
                     "Estimando posteriores hierárquicos, derivadas temporais, "
@@ -172,6 +192,40 @@ def main():
                 )
                 engine = BayesTrafficEngine(config)
                 all_actions, best = engine.run(df)
+
+            model_comparison = None
+            model_decision = None
+            if (
+                validate_temporal
+                and quality.days >= 21 + int(horizon_days)
+            ):
+                st.write(
+                    "Executando comparação temporal rolling-origin "
+                    "em conta e campanhas..."
+                )
+                comparison_config = replace(
+                    config,
+                    draws=min(int(draws), 5000),
+                )
+                model_comparison, model_decision = compare_temporal_models(
+                    df,
+                    config=comparison_config,
+                    min_train_days=21,
+                    horizon_days=int(horizon_days),
+                    step_days=max(1, int(horizon_days)),
+                )
+
+            allocation = None
+            allocation_summary = None
+            try:
+                allocation, allocation_summary = optimize_campaign_allocation(
+                    all_actions
+                )
+            except Exception as allocation_exc:
+                allocation_summary = {
+                    "status": "unavailable",
+                    "reason": str(allocation_exc),
+                }
 
             manifest = build_run_manifest(
                 df,
@@ -188,10 +242,34 @@ def main():
                     "mcmc_diagnostics": (
                         diagnostics.__dict__ if diagnostics is not None else None
                     ),
+                    "ppc_summary": (
+                        ppc_summary.__dict__ if ppc_summary is not None else None
+                    ),
+                    "temporal_model_decision": model_decision,
+                    "allocation_summary": allocation_summary,
                 },
             )
             workspace = LocalWarehouse("workspace")
-            run_dir = workspace.persist_run(df, manifest, all_actions, best)
+            extra_tables = {}
+            extra_json = {}
+            if allocation is not None:
+                extra_tables["allocation"] = allocation
+            if model_comparison is not None and not model_comparison.empty:
+                extra_tables["temporal_model_comparison"] = model_comparison
+            if model_decision is not None:
+                extra_json["temporal_model_decision"] = model_decision
+            if allocation_summary is not None:
+                extra_json["allocation_summary"] = allocation_summary
+            if diagnostics is not None:
+                extra_tables["posterior_predictive_checks"] = result.ppc_detail
+            run_dir = workspace.persist_run(
+                df,
+                manifest,
+                all_actions,
+                best,
+                extra_tables=extra_tables,
+                extra_json=extra_json,
+            )
             status.update(label="Análise concluída.", state="complete", expanded=False)
 
         st.caption(f"Execução auditável salva em: {run_dir}")
@@ -216,6 +294,23 @@ def main():
                 st.error("O NUTS não atingiu todos os critérios de convergência definidos.")
             elif diagnostics.converged is True:
                 st.success("Diagnósticos principais de convergência aprovados.")
+
+            if ppc_summary is not None:
+                st.subheader("Posterior predictive checks")
+                p1, p2, p3, p4 = st.columns(4)
+                p1.metric("Status PPC", ppc_summary.status.upper())
+                p2.metric(
+                    "Cobertura cliques 90%",
+                    f"{ppc_summary.click_90_coverage:.1%}",
+                )
+                p3.metric(
+                    "Cobertura conversões 90%",
+                    f"{ppc_summary.conversion_90_coverage:.1%}",
+                )
+                p4.metric(
+                    "Conversões extremas",
+                    f"{ppc_summary.conversion_extreme_fraction:.1%}",
+                )
 
         account = best[best["level"] == "account"]
         st.subheader("Visão geral")
@@ -259,8 +354,16 @@ def main():
             "opportunity_score",
         ]
 
-        tab_overall, tab_campaign, tab_adset, tab_ad, tab_all = st.tabs(
-            ["Decisões", "Campanhas", "Conjuntos", "Anúncios", "Todas as simulações"]
+        tab_overall, tab_campaign, tab_adset, tab_ad, tab_alloc, tab_validation, tab_all = st.tabs(
+            [
+                "Decisões",
+                "Campanhas",
+                "Conjuntos",
+                "Anúncios",
+                "Alocação global",
+                "Validação",
+                "Todas as simulações",
+            ]
         )
         with tab_overall:
             st.dataframe(best[display_cols], use_container_width=True, hide_index=True)
@@ -282,6 +385,64 @@ def main():
                 use_container_width=True,
                 hide_index=True,
             )
+        with tab_alloc:
+            if allocation is None:
+                st.warning(allocation_summary.get("reason", "Alocação indisponível."))
+            else:
+                a1, a2, a3 = st.columns(3)
+                a1.metric(
+                    "Budget selecionado",
+                    _fmt_money(allocation_summary["selected_spend"]),
+                )
+                a2.metric(
+                    "Lucro esperado aditivo",
+                    _fmt_money(
+                        allocation_summary["expected_portfolio_profit_additive"]
+                    ),
+                )
+                a3.metric(
+                    "Regret aditivo",
+                    _fmt_money(allocation_summary["expected_regret_additive"]),
+                )
+                st.dataframe(
+                    allocation[
+                        [
+                            "entity_id",
+                            "evidence_tier",
+                            "action_multiplier",
+                            "expected_spend",
+                            "expected_profit",
+                            "p_profit",
+                            "p_incremental_profit_positive",
+                            "cvar10_profit",
+                        ]
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                st.caption(allocation_summary["important_limitation"])
+        with tab_validation:
+            if model_comparison is None:
+                st.info(
+                    "Comparação temporal não executada ou histórico insuficiente."
+                )
+            elif model_comparison.empty:
+                st.info("Histórico insuficiente para comparação rolling-origin.")
+            else:
+                st.dataframe(
+                    model_comparison,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                if model_decision.get("promote_state_space"):
+                    st.success(
+                        "State-space passou os gates de promoção nesta base."
+                    )
+                else:
+                    st.warning(
+                        "State-space não passou todos os gates; derivada local permanece referência."
+                    )
+                st.json(model_decision)
         with tab_all:
             st.dataframe(all_actions, use_container_width=True, hide_index=True)
 
