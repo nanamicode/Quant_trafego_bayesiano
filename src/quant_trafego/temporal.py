@@ -34,6 +34,10 @@ class TemporalSignal:
     instability_score: float
     recent_days: int
     history_days: int
+    ctr_current_logit_shift: float = 0.0
+    cvr_current_logit_shift: float = 0.0
+    ctr_current_shift_confidence: float = 0.0
+    cvr_current_shift_confidence: float = 0.0
 
 
 def _logit(p: np.ndarray) -> np.ndarray:
@@ -128,6 +132,65 @@ def _beta_recent_probability(
     return float(np.mean(r > b))
 
 
+def _current_level_shift(
+    successes: np.ndarray,
+    trials: np.ndarray,
+    dates: pd.Series,
+    *,
+    recent_days: int,
+) -> tuple[float, float]:
+    successes = np.asarray(successes, dtype=float)
+    trials = np.asarray(trials, dtype=float)
+    d = pd.to_datetime(dates).reset_index(drop=True)
+
+    if len(d) < 4 or d.isna().all():
+        return 0.0, 0.0
+
+    cutoff = d.max() - pd.Timedelta(
+        days=max(int(recent_days), 2) - 1
+    )
+    recent = (d >= cutoff).to_numpy()
+    prior = ~recent
+
+    recent_s = float(successes[recent].sum())
+    recent_n = float(trials[recent].sum())
+    prior_s = float(successes[prior].sum())
+    prior_n = float(trials[prior].sum())
+
+    if recent_n <= 0 or prior_n <= 0:
+        return 0.0, 0.0
+
+    recent_p = (recent_s + 0.5) / (recent_n + 1.0)
+    prior_p = (prior_s + 0.5) / (prior_n + 1.0)
+
+    shift = float(
+        _logit(np.array([recent_p]))[0]
+        - _logit(np.array([prior_p]))[0]
+    )
+    shift = float(np.clip(shift, -0.75, 0.75))
+
+    var_recent = 1.0 / max(
+        recent_n * recent_p * (1.0 - recent_p),
+        1e-9,
+    )
+    var_prior = 1.0 / max(
+        prior_n * prior_p * (1.0 - prior_p),
+        1e-9,
+    )
+    z = abs(shift) / max(
+        math.sqrt(var_recent + var_prior),
+        1e-9,
+    )
+    confidence = float(
+        np.clip(
+            2.0 * (norm.cdf(z) - 0.5),
+            0.0,
+            1.0,
+        )
+    )
+    return shift, confidence
+
+
 def analyze_temporal(
     df: pd.DataFrame,
     *,
@@ -206,6 +269,19 @@ def analyze_temporal(
     logits = np.concatenate([_logit(ctr_daily), _logit(cvr_daily)])
     instability = float(np.clip(np.nanstd(logits) / 1.5, 0.0, 1.0))
 
+    ctr_current_shift, ctr_current_confidence = _current_level_shift(
+        daily["clicks"].to_numpy(),
+        daily["impressions"].to_numpy(),
+        daily["date"],
+        recent_days=rdays,
+    )
+    cvr_current_shift, cvr_current_confidence = _current_level_shift(
+        daily["conversions"].to_numpy(),
+        daily["clicks"].to_numpy(),
+        daily["date"],
+        recent_days=rdays,
+    )
+
     return TemporalSignal(
         ctr=ctr_trend,
         cvr=cvr_trend,
@@ -215,4 +291,8 @@ def analyze_temporal(
         instability_score=instability,
         recent_days=int(recent_mask.sum()),
         history_days=n,
+        ctr_current_logit_shift=ctr_current_shift,
+        cvr_current_logit_shift=cvr_current_shift,
+        ctr_current_shift_confidence=ctr_current_confidence,
+        cvr_current_shift_confidence=cvr_current_confidence,
     )
