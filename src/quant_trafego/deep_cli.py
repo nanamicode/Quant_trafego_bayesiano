@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 
-from .action_plan import build_operational_action_plan, write_operational_action_plan
+from .action_plan import build_operational_action_plan, derive_account_budget_target, write_operational_action_plan
 from .deep_analysis import run_deep_analysis
 from .engine import EngineConfig
 from .funnel import hierarchical_funnel_diagnostics
@@ -101,6 +101,11 @@ def main():
         output_dir=args.output,
     )
 
+    account_budget_target = derive_account_budget_target(
+        result.best_actions,
+        source_df=df,
+        horizon_days=config.horizon_days,
+    )
     allocation = None
     allocation_summary = None
     try:
@@ -108,11 +113,13 @@ def main():
             result.all_actions,
             df,
             contribution_margin=config.contribution_margin,
+            total_budget=account_budget_target["recommended_horizon_amount"],
         )
     except Exception as portfolio_exc:
         try:
             allocation, allocation_summary = optimize_campaign_allocation(
-                result.all_actions
+                result.all_actions,
+                total_budget=account_budget_target["recommended_horizon_amount"],
             )
             allocation_summary["fallback_reason"] = str(portfolio_exc)
         except Exception as allocation_exc:
@@ -140,6 +147,7 @@ def main():
         result.best_actions,
         allocation=allocation,
         adset_allocation=adset_allocation,
+        account_budget_target=account_budget_target,
         source_df=df,
         horizon_days=config.horizon_days,
     )
@@ -161,7 +169,8 @@ def main():
             "ppc_summary": result.ppc_summary.__dict__,
             "deep_decision_source": result.decision_source,
             "deep_guardrail": result.guardrail,
-            "allocation_summary": allocation_summary,
+            "account_budget_target": account_budget_target,
+                    "allocation_summary": allocation_summary,
             "adset_allocation_summary": adset_allocation_summary,
         },
     )
@@ -202,6 +211,7 @@ def main():
         },
         extra_json={
             "posterior_predictive_summary": result.ppc_summary.__dict__,
+            "account_budget_target": account_budget_target,
             "allocation_summary": allocation_summary or {},
             "adset_allocation_summary": adset_allocation_summary or {},
         },
