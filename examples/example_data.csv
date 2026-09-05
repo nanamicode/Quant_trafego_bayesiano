@@ -1,0 +1,9 @@
+date,campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,status,impressions,clicks,conversions,spend,revenue
+2026-09-01,c1,Campanha Alpha,s1,Conjunto A,a1,Criativo 1,ACTIVE,12000,300,18,500,1800
+2026-09-02,c1,Campanha Alpha,s1,Conjunto A,a1,Criativo 1,ACTIVE,11800,286,15,490,1500
+2026-09-03,c1,Campanha Alpha,s1,Conjunto A,a2,Criativo 2,ACTIVE,7100,140,3,315,300
+2026-09-04,c1,Campanha Alpha,s1,Conjunto A,a2,Criativo 2,ACTIVE,7600,151,5,340,510
+2026-09-01,c1,Campanha Alpha,s2,Conjunto B,a3,Criativo 3,ACTIVE,6000,180,14,360,1540
+2026-09-02,c1,Campanha Alpha,s2,Conjunto B,a3,Criativo 3,ACTIVE,6800,220,19,415,2100
+2026-09-03,c2,Campanha Beta,s3,Conjunto C,a4,Criativo 4,ACTIVE,9200,173,7,430,760
+2026-09-04,c2,Campanha Beta,s3,Conjunto C,a4,Criativo 4,ACTIVE,9800,185,6,460,665
