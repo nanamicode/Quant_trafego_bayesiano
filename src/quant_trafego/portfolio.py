@@ -369,6 +369,43 @@ def optimize_campaign_portfolio(
             f"Otimização CVaR não encontrou solução: {result.message}"
         )
 
+    primary_result = result
+    primary_optimum = float(result.fun)
+
+    if (
+        alloc_cfg.revenue_tiebreak
+        and "expected_revenue" in actions.columns
+        and alloc_cfg.revenue_tiebreak_tolerance >= 0
+    ):
+        allowed_deterioration = (
+            float(alloc_cfg.revenue_tiebreak_tolerance)
+            * max(abs(primary_optimum), 1.0)
+        )
+        secondary_constraints = [
+            *constraints,
+            LinearConstraint(
+                objective[None, :],
+                -np.inf,
+                primary_optimum + allowed_deterioration,
+            ),
+        ]
+        revenue_objective = np.zeros(
+            n_vars,
+            dtype=float,
+        )
+        revenue_objective[:n_actions] = (
+            -actions["expected_revenue"].to_numpy(dtype=float)
+        )
+        secondary = milp(
+            c=revenue_objective,
+            integrality=integrality,
+            bounds=Bounds(lower, upper),
+            constraints=secondary_constraints,
+            options={"time_limit": risk_cfg.time_limit_seconds},
+        )
+        if secondary.success and secondary.x is not None:
+            result = secondary
+
     chosen_mask = result.x[:n_actions] > 0.5
     chosen = actions[chosen_mask].copy().sort_values("entity_id").reset_index(drop=True)
     chosen_indices = np.flatnonzero(chosen_mask)
@@ -403,6 +440,14 @@ def optimize_campaign_portfolio(
         "total_budget_limit": total_budget,
         "selected_spend": float(chosen["expected_spend"].sum()),
         "expected_portfolio_profit": float(chosen["expected_profit"].sum()),
+        "expected_portfolio_revenue": float(
+            chosen["expected_revenue"].sum()
+        ) if "expected_revenue" in chosen.columns else None,
+        "primary_risk_objective_optimum": float(-primary_optimum),
+        "revenue_tiebreak": bool(alloc_cfg.revenue_tiebreak),
+        "revenue_tiebreak_tolerance": float(
+            alloc_cfg.revenue_tiebreak_tolerance
+        ),
         "scenario_profit_p10": q,
         "scenario_portfolio_cvar": cvar,
         "scenario_p_profit": float(np.mean(portfolio_scenarios > 0)),
