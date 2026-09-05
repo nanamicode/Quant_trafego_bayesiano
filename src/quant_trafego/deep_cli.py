@@ -149,7 +149,7 @@ def main():
         "expected_incremental_profit_vs_hold",
         "p_profit",
         "p_action_optimal",
-        "decision_confidence",
+        "decision_score",
         "expected_regret",
     ]
     print(result.best_actions[cols].to_string(index=False))
