@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from .backtest import rolling_origin_backtest
+from .calibration import calibration_table
 from .engine import EngineConfig
 from .hardware import detect_hardware
 from .io import filter_active, load_ads_file
@@ -57,6 +58,17 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     detail.to_csv(out / "backtest_detail.csv", index=False)
     summary.to_csv(out / "backtest_summary.csv", index=False)
+    if not detail.empty:
+        profit_calibration = calibration_table(
+            detail["predicted_p_profit"],
+            (detail["actual_profit"] > 0).astype(float),
+        )
+        roas_calibration = calibration_table(
+            detail["predicted_p_roas_target"],
+            (detail["actual_roas"] >= args.target_roas).astype(float),
+        )
+        profit_calibration.to_csv(out / "profit_calibration.csv", index=False)
+        roas_calibration.to_csv(out / "roas_calibration.csv", index=False)
 
     if summary.empty:
         print("Dados insuficientes para o protocolo solicitado.")
