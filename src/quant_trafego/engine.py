@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import numpy as np
 import pandas as pd
 
@@ -81,6 +82,23 @@ class BayesTrafficEngine:
 
         return out
 
+    @staticmethod
+    def _stable_offset(level: str, entity_id: str) -> int:
+        digest = hashlib.blake2b(
+            f"{level}|{entity_id}".encode("utf-8"),
+            digest_size=4,
+        ).digest()
+        return int.from_bytes(digest, "little") % 100_000
+
+    @staticmethod
+    def _get_override(overrides, level, entity_id, fallback):
+        if not overrides:
+            return fallback, "empirical_bayes"
+        key = (level, str(entity_id))
+        if key in overrides:
+            return overrides[key], "mcmc"
+        return fallback, "empirical_bayes"
+
     def _global_posteriors(self, df: pd.DataFrame):
         s = aggregate(df)
         ctr_prior = BetaPosterior(
@@ -118,13 +136,17 @@ class BayesTrafficEngine:
         ctr_post,
         cvr_post,
         response_estimate: ResponseEstimate,
+        posterior_source: str,
     ):
         stats = aggregate(df)
         temporal = analyze_temporal(
             df,
             half_life_days=self.config.temporal_half_life_days,
             recent_days=self.config.temporal_recent_days,
-            seed=self.config.seed + (abs(hash((level, str(entity_id)))) % 100_000),
+            seed=(
+                self.config.seed
+                + self._stable_offset(level, str(entity_id))
+            ),
         )
 
         ctr_mean = temporal.ctr.effective_mean if self.config.use_temporal else 0.0
@@ -186,6 +208,7 @@ class BayesTrafficEngine:
             rows.append({
                 "level": level,
                 "entity_id": str(entity_id),
+                "posterior_source": posterior_source,
                 "historical_days": stats["days"],
                 "historical_spend": stats["spend"],
                 "historical_revenue": stats["revenue"],
@@ -230,11 +253,22 @@ class BayesTrafficEngine:
             })
         return rows
 
-    def run(self, df: pd.DataFrame):
+    def run(
+        self,
+        df: pd.DataFrame,
+        *,
+        posterior_overrides: dict | None = None,
+    ):
         df = self.validate(df)
         rows = []
 
-        global_ctr, global_cvr = self._global_posteriors(df)
+        global_fallback = self._global_posteriors(df)
+        (global_ctr, global_cvr), global_source = self._get_override(
+            posterior_overrides,
+            "account",
+            "ALL",
+            global_fallback,
+        )
         global_response = estimate_response(df)
         rows.extend(
             self._evaluate_entity(
@@ -244,22 +278,31 @@ class BayesTrafficEngine:
                 global_ctr,
                 global_cvr,
                 global_response,
+                global_source,
             )
         )
 
         campaign_posts = {}
         campaign_response = {}
+        campaign_source = {}
         for campaign_id, cdf in df.groupby("campaign_id", sort=False):
-            posts = self._posterior(
+            fallback = self._posterior(
                 cdf,
                 global_ctr,
                 global_cvr,
                 self.config.campaign_ctr_strength,
                 self.config.campaign_cvr_strength,
             )
+            posts, source = self._get_override(
+                posterior_overrides,
+                "campaign",
+                campaign_id,
+                fallback,
+            )
             response = estimate_response(cdf, parent=global_response)
             campaign_posts[campaign_id] = posts
             campaign_response[campaign_id] = response
+            campaign_source[campaign_id] = source
             rows.extend(
                 self._evaluate_entity(
                     "campaign",
@@ -267,6 +310,7 @@ class BayesTrafficEngine:
                     cdf,
                     *posts,
                     response,
+                    source,
                 )
             )
 
@@ -276,11 +320,17 @@ class BayesTrafficEngine:
             ["campaign_id", "adset_id"],
             sort=False,
         ):
-            posts = self._posterior(
+            fallback = self._posterior(
                 sdf,
                 *campaign_posts[campaign_id],
                 self.config.adset_ctr_strength,
                 self.config.adset_cvr_strength,
+            )
+            posts, source = self._get_override(
+                posterior_overrides,
+                "adset",
+                adset_id,
+                fallback,
             )
             response = estimate_response(
                 sdf,
@@ -295,6 +345,7 @@ class BayesTrafficEngine:
                     sdf,
                     *posts,
                     response,
+                    source,
                 )
             )
 
@@ -302,11 +353,17 @@ class BayesTrafficEngine:
             ["campaign_id", "adset_id", "ad_id"],
             sort=False,
         ):
-            posts = self._posterior(
+            fallback = self._posterior(
                 adf,
                 *adset_posts[(campaign_id, adset_id)],
                 self.config.ad_ctr_strength,
                 self.config.ad_cvr_strength,
+            )
+            posts, source = self._get_override(
+                posterior_overrides,
+                "ad",
+                ad_id,
+                fallback,
             )
             response = estimate_response(
                 adf,
@@ -319,6 +376,7 @@ class BayesTrafficEngine:
                     adf,
                     *posts,
                     response,
+                    source,
                 )
             )
 
