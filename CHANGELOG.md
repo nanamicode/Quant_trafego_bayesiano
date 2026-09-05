@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0
+
+- runtime oficial fixado em Python 3.12;
+- gerenciamento de ambiente migrado para uv;
+- DuckDB + Parquet como warehouse local embutido;
+- hash canônico dos dados e run_manifest para reprodutibilidade;
+- rolling-origin backtesting probabilístico;
+- Brier score, calibration gap, cobertura e interval score;
+- intervalos preditivos persistidos no Monte Carlo;
+- decisões de arquitetura e causalidade documentadas;
+- CLI específico de backtesting.
+
 ## 0.5.0
 
 - MCMC hierárquico conectado diretamente à árvore de decisões;
