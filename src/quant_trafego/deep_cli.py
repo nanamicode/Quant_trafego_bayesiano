@@ -92,6 +92,7 @@ def main():
             "quality_score": quality.score,
             "quality_warnings": list(quality.warnings),
             "mcmc_diagnostics": result.diagnostics.__dict__,
+            "ppc_summary": result.ppc_summary.__dict__,
         },
     )
     write_run_manifest(manifest, args.output)
@@ -101,6 +102,7 @@ def main():
     )
     print(f"Run auditável: {run_dir}")
     print(result.diagnostics)
+    print(result.ppc_summary)
     cols = [
         "level",
         "entity_id",
