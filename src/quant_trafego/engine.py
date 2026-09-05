@@ -626,20 +626,28 @@ class BayesTrafficEngine:
             - self.config.quality_confidence_weight
             * (1.0 - quality_factor)
         )
-        best["decision_confidence_raw"] = np.clip(
+        best["decision_score_raw"] = np.clip(
             confidence,
             0.0,
             1.0,
         )
-        best["decision_confidence"] = np.clip(
+        best["decision_score"] = np.clip(
             confidence * quality_multiplier,
             0.0,
             1.0,
         )
+        best["decision_score_kind"] = (
+            "heuristic_composite_not_calibrated_probability"
+        )
+
+        # Backward-compatible aliases. These must not be interpreted as
+        # calibrated probabilities.
+        best["decision_confidence_raw"] = best["decision_score_raw"]
+        best["decision_confidence"] = best["decision_score"]
         best["data_quality_score"] = quality_report.score
         best["opportunity_score"] = (
             best["risk_adjusted_utility"]
-            * (0.25 + 0.75 * best["decision_confidence"])
+            * (0.25 + 0.75 * best["decision_score"])
             / (1.0 + np.maximum(best["expected_regret"], 0.0))
         )
         best = best.sort_values(
