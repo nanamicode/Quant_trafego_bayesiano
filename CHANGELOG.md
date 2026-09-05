@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0
+
+- MCMC hierárquico conectado diretamente à árvore de decisões;
+- posteriores materializados em conta, campanha, conjunto e anúncio;
+- moment matching das amostras MCMC para o simulador econômico;
+- modo profundo disponível na interface local;
+- NUTS/ADVI automático conforme tamanho da estrutura;
+- diagnóstico de R-hat, ESS e divergências;
+- semente temporal determinística entre execuções;
+- CLI profundo fim a fim.
+
 ## 0.4.0
 
 - análise hierárquica conta → campanha → conjunto → anúncio;
