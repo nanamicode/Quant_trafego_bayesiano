@@ -56,11 +56,11 @@ Depois selecione **MCMC hierárquico profundo** na interface ou rode:
 uv run quant-trafego-mcmc --input "C:\dados\meta.xlsx" --output output_mcmc --contribution-margin 0.40 --target-roas 2.0
 ```
 
-O modelo PyMC produz posteriores por conta, campanha, conjunto e anúncio. NUTS registra R-hat, ESS e divergências. ADVI é usado apenas como fallback aproximado para estruturas grandes e permanece marcado como aproximação.
+O modelo PyMC produz posteriores por conta, campanha, conjunto e anúncio. NUTS registra R-hat, ESS e divergências. NUTS não convergido não dirige capital: a decisão volta ao Empirical Bayes. ADVI permanece aproximação explícita e recebe cap conservador de scale. PPC reprovado preserva o posterior para diagnóstico, mas impede aumento de exposição.
 
 ## Validação probabilística
 
-A v0.7 separa três perguntas diferentes:
+A v0.8 separa três perguntas diferentes:
 
 - **o modelo converge numericamente?** → R-hat, ESS e divergências;
 - **o modelo consegue reproduzir dados plausíveis?** → posterior predictive checks;
@@ -100,7 +100,7 @@ Esse backtest valida previsão sob a política observada. Ele **não** revela o 
 
 ## Causalidade
 
-A elasticidade histórica gasto → conversões é tratada como **observacional**.
+A elasticidade histórica gasto → conversões é tratada como **observacional**. A v0.8 controla tendência linear/quadrática e dia da semana e mede quanta variação de gasto ainda é identificável depois desses controles.
 
 O sistema não deve transformar automaticamente correlação histórica em efeito causal de aumentar orçamento.
 
@@ -129,6 +129,8 @@ Ele só deve substituir o modelo de referência quando passar os gates de backte
 
 No modo profundo, o PyMC preserva observações diárias e adiciona um efeito temporal global `GaussianRandomWalk`. A decisão usa o posterior do estado temporal corrente.
 
+CTR e CVR também recebem sazonalidade semanal encolhida quando há histórico suficiente. O forecast diferencia posterior agregado de posterior MCMC corrente para não contar duas vezes o efeito do último weekday.
+
 ## Política de decisão
 
 O sistema mantém duas respostas:
@@ -136,7 +138,11 @@ O sistema mantém duas respostas:
 - `unconstrained_best_multiplier`: ótimo matemático sem política;
 - `action_multiplier`: recomendação permitida pelo nível de evidência.
 
-Scale-ups são limitados quando a resposta ao gasto é apenas preditiva/observacional e exigem probabilidades mínimas de lucro e ganho incremental.
+Scale-ups são limitados quando a resposta ao gasto é apenas preditiva/observacional e exigem probabilidades mínimas de lucro e ganho incremental. Qualidade insuficiente da base também pode limitar ou bloquear aumento de exposição.
+
+As ações da mesma entidade são comparadas em **mundos latentes compartilhados** de CTR, CVR, CPM, AOV, elasticidade e tendência. P(ação > manter), P(ação ótima) e regret usam lucro condicional pareado; CVaR e P(lucro) continuam usando risco realizado.
+
+`decision_score` é um score composto de governança entre 0 e 1. **Não é uma probabilidade calibrada.** O antigo campo `decision_confidence` permanece apenas como alias retrocompatível.
 
 ## Otimização global
 
@@ -152,7 +158,7 @@ Quando o histórico original também está disponível, o modo preferido usa cen
 uv run quant-trafego-portfolio --actions output\all_actions.csv --history "C:\dados\meta.xlsx" --contribution-margin 0.40
 ```
 
-Esse portfólio usa correlação histórica encolhida + cópula Gaussiana para dependência estatística. Isso melhora risco conjunto, mas **não é uma estimativa causal de canibalização de leilão**.
+Esse portfólio usa correlação histórica encolhida par a par pela quantidade real de dias de coexistência + cópula Gaussiana para dependência estatística. O otimizador respeita `policy_eligible` como restrição dura e não pode reabrir uma ação bloqueada pelo motor. Isso melhora risco conjunto, mas **não é uma estimativa causal de canibalização de leilão**.
 
 ## Funil opcional
 
@@ -198,10 +204,12 @@ O `run_manifest.json` registra:
 - comparação recente × histórico;
 - mudança de regime;
 - instabilidade;
-- elasticidade observacional de resposta ao gasto;
+- elasticidade observacional de resposta ao gasto controlada por tendência/weekday;
 - shrinkage hierárquico da elasticidade;
 - fallback Hill;
-- Monte Carlo econômico;
+- Monte Carlo econômico com contextos latentes compartilhados entre ações;
+- contrafactuais pareados para ação ótima, incremental e regret;
+- sazonalidade semanal encolhida de CTR/CVR;
 - intervalos preditivos;
 - margem de contribuição;
 - P(lucro);
@@ -214,7 +222,9 @@ O `run_manifest.json` registra:
 - CVaR;
 - expected regret;
 - utilidade ajustada a risco;
-- decisão com score de confiança;
+- decision score explicitamente não calibrado como probabilidade;
+- guardrails de qualidade da base;
+- fallback profundo quando NUTS/PPC não sustentam ação;
 - autodetecção de CPU/RAM;
 - qualidade estrutural da base;
 - posterior predictive checks;
@@ -223,7 +233,7 @@ O `run_manifest.json` registra:
 - reliability tables e ECE;
 - política de decisão baseada em evidência;
 - alocação MILP exata;
-- portfólio correlacionado com CVaR;
+- portfólio correlacionado com CVaR e shrinkage por overlap par a par;
 - diagnóstico probabilístico de funil opcional;
 - persistência DuckDB/Parquet;
 - manifestos reproduzíveis.
