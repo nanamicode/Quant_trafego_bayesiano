@@ -47,6 +47,14 @@ def test_weekly_seasonality_detects_weekend_ctr_drop():
     assert mean_shift > 0
     assert sd_shift >= 0
 
+    from_last_mean, from_last_sd = signal.ctr.future_shift(
+        df["date"].max(),
+        5,
+        from_last_day=True,
+    )
+    assert from_last_mean > mean_shift
+    assert from_last_sd >= 0
+
 
 def test_weekly_seasonality_is_disabled_for_short_history():
     df = _weekly_panel(14)
