@@ -103,6 +103,8 @@ def main():
             "quality_report": asdict(quality),
             "mcmc_diagnostics": result.diagnostics.__dict__,
             "ppc_summary": result.ppc_summary.__dict__,
+            "deep_decision_source": result.decision_source,
+            "deep_guardrail": result.guardrail,
         },
     )
     write_run_manifest(manifest, args.output)
@@ -115,6 +117,11 @@ def main():
         extra_tables={
             "posterior_predictive_checks": result.ppc_detail,
             **(
+                {"mcmc_candidate_actions": result.candidate_mcmc_actions}
+                if result.guardrail != "none"
+                else {}
+            ),
+            **(
                 {"funnel_diagnostics": funnel_detail}
                 if not funnel_detail.empty
                 else {}
@@ -125,6 +132,8 @@ def main():
     print(f"Run auditável: {run_dir}")
     print(result.diagnostics)
     print(result.ppc_summary)
+    print(f"Fonte decisória profunda: {result.decision_source}")
+    print(f"Guardrail profundo: {result.guardrail}")
     cols = [
         "level",
         "entity_id",
