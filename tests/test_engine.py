@@ -332,3 +332,34 @@ def test_daily_attributed_conversions_may_exceed_same_day_clicks():
     all_actions, best = engine.run(df)
     assert not all_actions.empty
     assert not best.empty
+
+
+def test_engine_can_evaluate_only_account_and_campaign_with_progress():
+    df = pd.read_csv("examples/example_data.csv")
+    events = []
+
+    all_actions, best = BayesTrafficEngine(
+        EngineConfig(
+            draws=120,
+            seed=91,
+        )
+    ).run(
+        df,
+        evaluation_levels={"account", "campaign"},
+        progress_callback=events.append,
+    )
+
+    assert set(all_actions["level"].unique()) == {
+        "account",
+        "campaign",
+    }
+    assert set(best["level"].unique()) == {
+        "account",
+        "campaign",
+    }
+    assert events
+    assert events[-1]["completed"] == events[-1]["total"]
+    assert all(
+        event["level"] in {"account", "campaign"}
+        for event in events
+    )
