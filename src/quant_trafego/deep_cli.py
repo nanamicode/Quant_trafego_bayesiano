@@ -4,6 +4,7 @@ import argparse
 
 from .deep_analysis import run_deep_analysis
 from .engine import EngineConfig
+from .funnel import hierarchical_funnel_diagnostics
 from .hardware import detect_hardware
 from .io import filter_active, load_ads_file
 from .quality import assess_data_quality
@@ -52,6 +53,7 @@ def main():
         df = filter_active(df)
 
     quality = assess_data_quality(df)
+    funnel_detail = hierarchical_funnel_diagnostics(df)
     hw = detect_hardware()
     chains = args.chains or hw.recommended_mcmc_chains
     cores = args.cores or hw.recommended_mcmc_cores
@@ -108,7 +110,14 @@ def main():
         manifest,
         result.all_actions,
         result.best_actions,
-        extra_tables={"posterior_predictive_checks": result.ppc_detail},
+        extra_tables={
+            "posterior_predictive_checks": result.ppc_detail,
+            **(
+                {"funnel_diagnostics": funnel_detail}
+                if not funnel_detail.empty
+                else {}
+            ),
+        },
         extra_json={"posterior_predictive_summary": result.ppc_summary.__dict__},
     )
     print(f"Run auditável: {run_dir}")
