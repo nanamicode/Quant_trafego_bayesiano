@@ -297,6 +297,7 @@ def build_operational_action_plan(
     best_actions: pd.DataFrame,
     *,
     allocation: pd.DataFrame | None = None,
+    adset_allocation: pd.DataFrame | None = None,
     source_df: pd.DataFrame | None = None,
     horizon_days: int = 7,
     config: OperationalPlanConfig | None = None,
@@ -305,8 +306,8 @@ def build_operational_action_plan(
     Convert posterior decisions into an execution-first plan.
 
     Campaign decisions from the constrained portfolio allocation replace
-    independent campaign optima when an allocation is supplied. Lower
-    hierarchy levels retain their own diagnostic recommendations.
+    independent campaign optima. Ad-set decisions can likewise be replaced by
+    the nested allocation reconciled to each selected campaign budget.
     """
     cfg = config or OperationalPlanConfig()
 
@@ -362,6 +363,58 @@ def build_operational_action_plan(
             [
                 best[
                     best["level"] != "campaign"
+                ],
+                alloc,
+            ],
+            ignore_index=True,
+            sort=False,
+        )
+
+    if adset_allocation is not None and not adset_allocation.empty:
+        alloc = adset_allocation.copy()
+        alloc["entity_id"] = alloc["entity_id"].astype(str)
+        adset_best = best[
+            best["level"] == "adset"
+        ].copy()
+        adset_best["entity_id"] = adset_best["entity_id"].astype(str)
+
+        post_selection = [
+            col
+            for col in [
+                "unconstrained_best_multiplier",
+                "unconstrained_best_utility",
+                "policy_constrained",
+                "policy_utility_gap",
+                "decision_score_raw",
+                "decision_score",
+                "decision_score_kind",
+                "decision_confidence_raw",
+                "decision_confidence",
+                "opportunity_score",
+            ]
+            if col in adset_best.columns
+        ]
+        if post_selection:
+            meta = adset_best[
+                ["entity_id", *post_selection]
+            ].drop_duplicates("entity_id")
+            alloc = alloc.drop(
+                columns=[
+                    col
+                    for col in post_selection
+                    if col in alloc.columns
+                ],
+                errors="ignore",
+            ).merge(
+                meta,
+                on="entity_id",
+                how="left",
+            )
+
+        best = pd.concat(
+            [
+                best[
+                    best["level"] != "adset"
                 ],
                 alloc,
             ],
