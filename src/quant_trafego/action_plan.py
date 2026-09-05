@@ -602,12 +602,15 @@ def build_operational_action_plan(
         return pd.DataFrame()
 
     if account_budget_target is None:
-        account_budget_target = derive_account_budget_target(
-            best,
-            source_df=source_df,
-            horizon_days=horizon_days,
-            recent_spend_days=cfg.recent_spend_days,
-        )
+        try:
+            account_budget_target = derive_account_budget_target(
+                best,
+                source_df=source_df,
+                horizon_days=horizon_days,
+                recent_spend_days=cfg.recent_spend_days,
+            )
+        except ValueError:
+            account_budget_target = None
 
     if allocation is not None and not allocation.empty:
         alloc = allocation.copy()
