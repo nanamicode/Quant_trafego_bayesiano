@@ -40,12 +40,22 @@ def _estimate_campaign_correlation_details(
     contribution_margin: float,
     shrinkage_days: float = 20.0,
 ) -> tuple[np.ndarray, int, np.ndarray]:
-    daily = (
-        df.groupby(["date", "campaign_id"], as_index=False)
-        .agg(
-            spend=("spend", "sum"),
-            revenue=("revenue", "sum"),
+    agg_spec = {
+        "spend": ("spend", "sum"),
+        "revenue": ("revenue", "sum"),
+    }
+    if "impressions" in df.columns:
+        agg_spec["impressions"] = (
+            "impressions",
+            "sum",
         )
+
+    daily = (
+        df.groupby(
+            ["date", "campaign_id"],
+            as_index=False,
+        )
+        .agg(**agg_spec)
         .copy()
     )
     daily["campaign_id"] = daily["campaign_id"].astype(str)
@@ -53,6 +63,14 @@ def _estimate_campaign_correlation_details(
         daily["revenue"] * float(contribution_margin)
         - daily["spend"]
     )
+    delivering = daily["spend"].gt(0)
+    if "impressions" in daily.columns:
+        delivering |= daily["impressions"].gt(0)
+
+    # Complete Meta ad×day exports contain structural zero rows. Those rows
+    # must not imply that two campaigns were simultaneously exposed to the
+    # auction on that date.
+    daily.loc[~delivering, "profit"] = np.nan
     pivot = daily.pivot(
         index="date",
         columns="campaign_id",
