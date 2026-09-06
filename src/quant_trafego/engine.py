@@ -63,6 +63,10 @@ class EngineConfig:
     min_p_incremental_for_scale: float = 0.55
     min_quality_for_scale: float = 0.55
     require_recent_contribution_profit_for_scale: bool = True
+    protect_recent_profitable_from_hard_pause: bool = True
+    min_p_beats_hold_for_profitable_pause: float = 0.80
+    min_p_action_optimal_for_profitable_pause: float = 0.60
+    max_instability_for_profitable_pause: float = 0.60
     cautious_quality_threshold: float = 0.75
     cautious_quality_max_multiplier: float = 1.20
     quality_confidence_weight: float = 0.35
@@ -1135,6 +1139,47 @@ class BayesTrafficEngine:
             )
 
         all_actions["recent_scale_sanity_ok"] = recent_profit_ok
+
+        hard_pause = np.isclose(
+            all_actions["action_multiplier"].to_numpy(dtype=float),
+            0.0,
+        )
+        recent_profitable = (
+            all_actions["recent_contribution_profit"].to_numpy(dtype=float)
+            > 0.0
+        )
+        pause_evidence_ok = (
+            (
+                all_actions["p_beats_hold"].to_numpy(dtype=float)
+                >= self.config.min_p_beats_hold_for_profitable_pause
+            )
+            & (
+                all_actions["p_action_optimal"].to_numpy(dtype=float)
+                >= self.config.min_p_action_optimal_for_profitable_pause
+            )
+            & (
+                all_actions["instability_score"].to_numpy(dtype=float)
+                <= self.config.max_instability_for_profitable_pause
+            )
+        )
+        if self.config.protect_recent_profitable_from_hard_pause:
+            profitable_pause_ok = (
+                (~hard_pause)
+                | (~recent_profitable)
+                | pause_evidence_ok
+            )
+        else:
+            profitable_pause_ok = np.ones(
+                len(all_actions),
+                dtype=bool,
+            )
+        all_actions["hard_pause_guardrail_ok"] = profitable_pause_ok
+        all_actions["hard_pause_guardrail_triggered"] = (
+            hard_pause
+            & recent_profitable
+            & (~pause_evidence_ok)
+        )
+
         all_actions["policy_max_multiplier"] = caps
         all_actions["policy_eligible"] = (
             all_actions["action_multiplier"].to_numpy(dtype=float)
@@ -1153,7 +1198,7 @@ class BayesTrafficEngine:
                     >= self.config.min_p_incremental_for_scale
                 )
             )
-        )
+        ) & profitable_pause_ok
 
         all_actions["selection_objective"] = (
             "risk_adjusted_profit_first_revenue_secondary"
