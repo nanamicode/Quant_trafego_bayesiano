@@ -284,3 +284,38 @@ def test_cvar_portfolio_does_not_collapse_to_zero_when_one_campaign_is_profitabl
     assert chosen["winner"] == 1.0
     assert chosen["loser"] == 0.0
     assert summary["selected_spend"] == 100.0
+
+
+def test_structural_zero_panel_rows_do_not_fake_campaign_overlap():
+    rows = []
+    dates = pd.date_range("2026-01-01", periods=30, freq="D")
+    for date in dates:
+        for campaign in ["c1", "c2"]:
+            if campaign == "c1":
+                delivering = date <= pd.Timestamp("2026-01-10")
+            else:
+                delivering = (
+                    pd.Timestamp("2026-01-06")
+                    <= date
+                    <= pd.Timestamp("2026-01-15")
+                )
+            rows.append(
+                {
+                    "date": date,
+                    "campaign_id": campaign,
+                    "spend": 100.0 if delivering else 0.0,
+                    "revenue": 180.0 if delivering else 0.0,
+                    "impressions": 1000 if delivering else 0,
+                }
+            )
+
+    corr, n_days = estimate_campaign_correlation(
+        pd.DataFrame(rows),
+        ["c1", "c2"],
+        contribution_margin=1.0,
+        shrinkage_days=20.0,
+    )
+    assert n_days == 30
+    # True simultaneous delivery is only Jan 6-10 (5 days). Structural
+    # zero rows outside delivery must not create 30 days of overlap.
+    assert abs(corr[0, 1]) < 0.35
