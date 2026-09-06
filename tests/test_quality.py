@@ -86,3 +86,36 @@ def test_quality_does_not_penalize_valid_meta_daily_attribution_lag():
     )
     report = assess_data_quality(df)
     assert report.funnel_tracking_violation_rows == 0
+
+
+def test_quality_ignores_structural_zero_rows_outside_ad_delivery_window():
+    rows = []
+    dates = pd.date_range("2026-01-01", periods=10, freq="D")
+    for date in dates:
+        delivering = pd.Timestamp("2026-01-04") <= date <= pd.Timestamp("2026-01-08")
+        rows.append(
+            {
+                "date": date,
+                "campaign_id": "c1",
+                "adset_id": "s1",
+                "ad_id": "a1",
+                "impressions": 1000 if delivering else 0,
+                "clicks": 20 if delivering else 0,
+                "conversions": 2 if delivering else 0,
+                "spend": 50.0 if delivering else 0.0,
+                "revenue": 150.0 if delivering else 0.0,
+            }
+        )
+
+    report = assess_data_quality(pd.DataFrame(rows))
+    assert report.delivery_window_rows == 5
+    assert report.zero_spend_rows == 0
+    assert report.zero_impression_rows == 0
+    assert not any(
+        "gasto zero" in warning
+        for warning in report.warnings
+    )
+    assert not any(
+        "impressões zero" in warning
+        for warning in report.warnings
+    )
