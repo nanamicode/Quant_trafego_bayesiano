@@ -486,3 +486,42 @@ def test_single_child_ad_uses_external_context_prior_not_its_own_parent_recycled
     )
     assert ad["posterior_ctr_mean"] == pytest.approx(expected_ad[0].mean)
     assert ad["posterior_cvr_mean"] == pytest.approx(expected_ad[1].mean)
+
+
+def test_recently_profitable_entity_requires_extra_evidence_for_hard_pause():
+    rows = []
+    for day in range(14):
+        rows.append(
+            {
+                "date": pd.Timestamp("2026-08-01") + pd.Timedelta(days=day),
+                "campaign_id": "c1",
+                "adset_id": "s1",
+                "ad_id": "a1",
+                "impressions": 10000,
+                "clicks": 300,
+                "conversions": 20,
+                "spend": 100.0,
+                "revenue": 250.0,
+            }
+        )
+
+    actions, best = BayesTrafficEngine(
+        EngineConfig(
+            draws=120,
+            seed=31,
+            contribution_margin=0.70,
+            actions=(0.0, 1.0),
+            protect_recent_profitable_from_hard_pause=True,
+            min_p_beats_hold_for_profitable_pause=1.01,
+            min_p_action_optimal_for_profitable_pause=1.01,
+            max_instability_for_profitable_pause=0.0,
+        )
+    ).run(pd.DataFrame(rows))
+
+    pauses = actions[
+        actions["action_multiplier"] == 0.0
+    ]
+    assert pauses["recent_contribution_profit"].gt(0.0).all()
+    assert pauses["hard_pause_guardrail_triggered"].all()
+    assert (~pauses["policy_eligible"]).all()
+    assert (best["action_multiplier"] == 1.0).all()
