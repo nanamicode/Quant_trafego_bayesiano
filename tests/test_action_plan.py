@@ -474,3 +474,43 @@ def test_ad_is_blocked_when_parent_campaign_is_off_and_has_no_fake_budget():
     assert bool(ad["blocked_by_parent"])
     assert ad["duplicate_action"] == "NAO"
     assert pd.isna(ad["recommended_daily_amount"])
+
+
+def test_bearish_uniform_account_action_does_not_zero_selective_portfolio_cap():
+    best = pd.DataFrame(
+        [
+            {
+                "level": "account",
+                "entity_id": "ALL",
+                "action_multiplier": 0.0,
+                "historical_days": 7,
+                "historical_spend": 700.0,
+                "p_profit": 0.0,
+                "p_incremental_profit_positive": 0.9,
+                "decision_score": 0.2,
+            }
+        ]
+    )
+    source = pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp("2026-08-30") + pd.Timedelta(days=day),
+                "campaign_id": "c1",
+                "spend": 100.0,
+            }
+            for day in range(7)
+        ]
+    )
+    target = derive_account_budget_target(
+        best,
+        source_df=source,
+        horizon_days=7,
+    )
+
+    assert target["uniform_account_scenario_daily_amount"] == 0.0
+    assert target["current_daily_amount"] == 100.0
+    assert target["portfolio_budget_cap_daily"] == 100.0
+    assert target["portfolio_budget_cap_horizon"] == 700.0
+    assert target["macro_action_role"] == (
+        "uniform_scaling_risk_signal_not_hard_allocation"
+    )
