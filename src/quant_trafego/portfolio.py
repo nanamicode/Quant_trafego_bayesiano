@@ -427,7 +427,7 @@ def optimize_campaign_portfolio(
     chosen_mask = result.x[:n_actions] > 0.5
     chosen = actions[chosen_mask].copy()
     chosen["parent_account_budget_limit"] = float(total_budget)
-    chosen["allocation_source"] = "account_capital_envelope_cvar"
+    chosen["allocation_source"] = "selective_portfolio_budget_cap_cvar"
     chosen = chosen.sort_values("entity_id").reset_index(drop=True)
     chosen_indices = np.flatnonzero(chosen_mask)
     portfolio_scenarios = scenario_profit[:, chosen_indices].sum(axis=1)
