@@ -132,7 +132,7 @@ def main():
             result.all_actions,
             df,
             contribution_margin=config.contribution_margin,
-            total_budget=account_budget_target["recommended_horizon_amount"],
+            total_budget=account_budget_target["portfolio_budget_cap_horizon"],
         )
     except Exception as portfolio_exc:
         try:
