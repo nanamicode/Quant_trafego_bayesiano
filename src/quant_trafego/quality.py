@@ -37,6 +37,7 @@ class DataQualityReport:
     adsets: int
     ads: int
     median_campaign_active_days: float
+    delivery_window_rows: int
     zero_spend_rows: int
     zero_impression_rows: int
     duplicate_entity_day_rows: int
@@ -80,6 +81,7 @@ def _numeric_frame(
 def _campaign_overlap_fraction(
     df: pd.DataFrame,
     valid_dates: pd.Series,
+    delivery_mask: pd.Series | None = None,
 ) -> tuple[float, float]:
     if (
         "campaign_id" not in df.columns
@@ -91,8 +93,16 @@ def _campaign_overlap_fraction(
         {
             "date": valid_dates,
             "campaign_id": df["campaign_id"].astype(str),
+            "delivering": (
+                delivery_mask.astype(bool)
+                if delivery_mask is not None
+                else True
+            ),
         }
     ).dropna(subset=["date"])
+    panel = panel[
+        panel["delivering"]
+    ].copy()
 
     if panel.empty:
         return 0.0, 0.0
@@ -205,11 +215,73 @@ def assess_data_quality(
         negative_mask.sum()
     )
 
+    delivering_now = (
+        numeric["spend"].fillna(0).gt(0)
+        | numeric["impressions"].fillna(0).gt(0)
+    )
+
+    # Meta exports frequently materialize a complete ad×day panel, including
+    # structural zero rows before an ad starts delivering. Quality penalties
+    # must be computed only inside each ad's observed delivery window.
+    if (
+        "ad_id" in df.columns
+        and parsed_dates.notna().any()
+    ):
+        delivery_frame = pd.DataFrame(
+            {
+                "ad_id": df["ad_id"].astype(str),
+                "date": parsed_dates,
+                "delivering": delivering_now.to_numpy(dtype=bool),
+            },
+            index=df.index,
+        )
+        delivered_dates = delivery_frame[
+            delivery_frame["delivering"]
+            & delivery_frame["date"].notna()
+        ]
+        if delivered_dates.empty:
+            delivery_window_mask = pd.Series(
+                False,
+                index=df.index,
+            )
+        else:
+            bounds = (
+                delivered_dates.groupby("ad_id")["date"]
+                .agg(["min", "max"])
+            )
+            first = delivery_frame["ad_id"].map(
+                bounds["min"]
+            )
+            last = delivery_frame["ad_id"].map(
+                bounds["max"]
+            )
+            delivery_window_mask = (
+                delivery_frame["date"].notna()
+                & first.notna()
+                & last.notna()
+                & (delivery_frame["date"] >= first)
+                & (delivery_frame["date"] <= last)
+            )
+    else:
+        delivery_window_mask = pd.Series(
+            True,
+            index=df.index,
+        )
+
+    delivery_window_rows = int(
+        delivery_window_mask.sum()
+    )
     zero_spend = int(
-        numeric["spend"].fillna(0).eq(0).sum()
+        (
+            delivery_window_mask
+            & numeric["spend"].fillna(0).eq(0)
+        ).sum()
     )
     zero_impr = int(
-        numeric["impressions"].fillna(0).eq(0).sum()
+        (
+            delivery_window_mask
+            & numeric["impressions"].fillna(0).eq(0)
+        ).sum()
     )
 
     # Meta Ads attribution is not a same-day literal funnel:
@@ -290,6 +362,7 @@ def assess_data_quality(
         _campaign_overlap_fraction(
             df,
             parsed_dates,
+            delivering_now,
         )
     )
 
@@ -378,15 +451,21 @@ def assess_data_quality(
             else 8
         )
 
-    if rows and zero_spend / rows > 0.10:
+    if (
+        delivery_window_rows
+        and zero_spend / delivery_window_rows > 0.10
+    ):
         warnings.append(
-            "Mais de 10% das linhas têm gasto zero."
+            "Mais de 10% das linhas dentro da janela real de entrega têm gasto zero."
         )
         penalty += 10
 
-    if rows and zero_impr / rows > 0.05:
+    if (
+        delivery_window_rows
+        and zero_impr / delivery_window_rows > 0.05
+    ):
         warnings.append(
-            "Mais de 5% das linhas têm impressões zero."
+            "Mais de 5% das linhas dentro da janela real de entrega têm impressões zero."
         )
         penalty += 10
 
@@ -438,6 +517,7 @@ def assess_data_quality(
         adsets=adsets,
         ads=ads,
         median_campaign_active_days=median_campaign_active_days,
+        delivery_window_rows=delivery_window_rows,
         zero_spend_rows=zero_spend,
         zero_impression_rows=zero_impr,
         duplicate_entity_day_rows=dupes,
