@@ -157,3 +157,86 @@ def test_adset_allocation_respects_selected_parent_campaign_budget():
         selected["parent_campaign_budget_limit"] == 180.0
     ).all()
     assert summary["campaigns"]["c1"]["selected_spend"] <= 180.0 + 1e-9
+
+
+def test_optimizer_keeps_profitable_campaign_when_other_campaign_should_be_off():
+    actions = pd.DataFrame(
+        [
+            {
+                "level": "campaign",
+                "entity_id": "winner",
+                "action_multiplier": 0.0,
+                "expected_spend": 0.0,
+                "expected_profit": 0.0,
+                "expected_revenue": 0.0,
+                "risk_adjusted_utility": 0.0,
+                "p_profit": 0.0,
+                "p_incremental_profit_positive": 0.0,
+                "cvar10_profit": 0.0,
+                "expected_regret": 100.0,
+                "response_confidence": 0.0,
+                "policy_eligible": True,
+            },
+            {
+                "level": "campaign",
+                "entity_id": "winner",
+                "action_multiplier": 1.0,
+                "expected_spend": 100.0,
+                "expected_profit": 40.0,
+                "expected_revenue": 200.0,
+                "risk_adjusted_utility": 35.0,
+                "p_profit": 0.9,
+                "p_incremental_profit_positive": 0.5,
+                "cvar10_profit": 10.0,
+                "expected_regret": 0.0,
+                "response_confidence": 0.0,
+                "policy_eligible": True,
+            },
+            {
+                "level": "campaign",
+                "entity_id": "loser",
+                "action_multiplier": 0.0,
+                "expected_spend": 0.0,
+                "expected_profit": 0.0,
+                "expected_revenue": 0.0,
+                "risk_adjusted_utility": 0.0,
+                "p_profit": 0.0,
+                "p_incremental_profit_positive": 0.9,
+                "cvar10_profit": 0.0,
+                "expected_regret": 0.0,
+                "response_confidence": 0.0,
+                "policy_eligible": True,
+            },
+            {
+                "level": "campaign",
+                "entity_id": "loser",
+                "action_multiplier": 1.0,
+                "expected_spend": 100.0,
+                "expected_profit": -50.0,
+                "expected_revenue": 50.0,
+                "risk_adjusted_utility": -60.0,
+                "p_profit": 0.1,
+                "p_incremental_profit_positive": 0.5,
+                "cvar10_profit": -80.0,
+                "expected_regret": 50.0,
+                "response_confidence": 0.0,
+                "policy_eligible": True,
+            },
+        ]
+    )
+    selected, summary = optimize_campaign_allocation(
+        actions,
+        total_budget=200.0,
+        config=AllocationConfig(
+            revenue_tiebreak=False,
+        ),
+    )
+    chosen = dict(
+        zip(
+            selected["entity_id"],
+            selected["action_multiplier"],
+        )
+    )
+    assert chosen["winner"] == 1.0
+    assert chosen["loser"] == 0.0
+    assert summary["selected_spend"] == 100.0
