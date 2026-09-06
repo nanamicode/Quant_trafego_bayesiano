@@ -420,11 +420,14 @@ def derive_account_budget_target(
     recent_spend_days: int = 7,
 ) -> dict:
     """
-    Translate the approved account action into an absolute capital envelope.
+    Translate the account-wide uniform-scaling counterfactual into macro risk
+    context plus a safe portfolio budget cap.
 
-    Explicit campaign budgets are preferred. Otherwise recent observed account
-    spend is used. The returned horizon amount is the budget constraint passed
-    to the campaign portfolio optimizer.
+    The account action answers "what if the whole active portfolio were scaled
+    uniformly?". It must NOT hard-code the portfolio allocation. When the macro
+    action is <= 1.0x, the optimizer may reallocate up to current delivered
+    spend. When macro evidence supports expansion (>1.0x), that expansion can
+    raise the cap. The campaign solver decides how much of the cap to deploy.
     """
     account = best_actions[
         best_actions["level"] == "account"
@@ -556,6 +559,17 @@ def derive_account_budget_target(
         current_daily
         * multiplier
     )
+    # The uniform account scenario is diagnostic, not a hard budget command.
+    # A bearish macro scenario can block net expansion, but it must not prevent
+    # selective reallocation toward profitable campaigns.
+    portfolio_budget_cap_multiplier = max(
+        1.0,
+        multiplier,
+    )
+    portfolio_budget_cap_daily = (
+        current_daily
+        * portfolio_budget_cap_multiplier
+    )
     horizon = max(
         int(horizon_days),
         1,
@@ -567,6 +581,16 @@ def derive_account_budget_target(
         "configured_daily_budget": configured_budget_daily,
         "current_daily_amount": current_daily,
         "recommended_daily_amount": recommended_daily,
+        "uniform_account_scenario_daily_amount": recommended_daily,
+        "portfolio_budget_cap_multiplier": portfolio_budget_cap_multiplier,
+        "portfolio_budget_cap_daily": portfolio_budget_cap_daily,
+        "portfolio_budget_cap_horizon": (
+            portfolio_budget_cap_daily
+            * horizon
+        ),
+        "macro_action_role": (
+            "uniform_scaling_risk_signal_not_hard_allocation"
+        ),
         "daily_amount_change": (
             recommended_daily
             - current_daily
@@ -816,9 +840,12 @@ def build_operational_action_plan(
 
     account_capital_ceiling_daily = (
         float(
-            account_budget_target[
-                "recommended_daily_amount"
-            ]
+            account_budget_target.get(
+                "portfolio_budget_cap_daily",
+                account_budget_target[
+                    "recommended_daily_amount"
+                ],
+            )
         )
         if account_budget_target is not None
         else np.nan
