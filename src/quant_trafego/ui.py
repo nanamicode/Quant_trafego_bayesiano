@@ -445,7 +445,7 @@ def main():
                     all_actions,
                     df,
                     contribution_margin=config.contribution_margin,
-                    total_budget=account_budget_target["recommended_horizon_amount"],
+                    total_budget=account_budget_target["portfolio_budget_cap_horizon"],
                 )
             except Exception as portfolio_exc:
                 try:
@@ -792,9 +792,12 @@ def main():
                 ].fillna(0.0).sum()
             )
             capital_ceiling_daily = float(
-                account_budget_target[
-                    "recommended_daily_amount"
-                ]
+                account_budget_target.get(
+                    "portfolio_budget_cap_daily",
+                    account_budget_target[
+                        "recommended_daily_amount"
+                    ],
+                )
             )
             unallocated_daily = max(
                 capital_ceiling_daily
@@ -826,11 +829,19 @@ def main():
                     "não encontrou justificativa estatística para empregar."
                 ),
             )
+            macro_uniform_daily = float(
+                account_budget_target[
+                    "uniform_account_scenario_daily_amount"
+                ]
+            )
             st.caption(
-                "Teto de capital permitido pela decisão da conta: "
+                "Cenário macro de escala uniforme da conta: "
+                f"{_fmt_money(macro_uniform_daily)}/dia. "
+                "Esse cenário é apenas um sinal de risco e NÃO define o "
+                "orçamento do portfólio. Teto seletivo permitido ao solver: "
                 f"{_fmt_money(capital_ceiling_daily)}/dia. "
-                "O spend recomendado é a soma dos cenários de campanha "
-                "efetivamente selecionados pelo portfólio."
+                "O spend recomendado é o capital que o solver realmente "
+                "encontrou justificativa para empregar nas campanhas."
             )
             if operational_plan.empty:
                 st.info("Nenhuma ação operacional disponível.")
