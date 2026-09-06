@@ -549,6 +549,20 @@ def main():
                 deep_guardrail=deep_guardrail,
             )
 
+            sanity = development_diagnostics.get(
+                "sanity_checks",
+                {},
+            )
+            if sanity.get(
+                "zero_portfolio_despite_recent_profitable_campaigns"
+            ):
+                st.error(
+                    "SANITY CHECK: o portfólio selecionou spend zero apesar de "
+                    "existirem campanhas recentemente lucrativas. Não execute "
+                    "esse plano sem revisão; o diagnóstico foi marcado para "
+                    "investigação."
+                )
+
             manifest = build_run_manifest(
                 df,
                 config=config,
@@ -725,7 +739,7 @@ def main():
         if not account.empty:
             row = account.iloc[0]
             m1, m2, m3, m4, m5 = st.columns(5)
-            m1.metric("Ação global", f"{row['action_multiplier']:.1f}x")
+            m1.metric("Escala uniforme macro", f"{row['action_multiplier']:.1f}x")
             m2.metric("Lucro esperado", _fmt_money(row["expected_profit"]))
             m3.metric("P(lucro)", f"{row['p_profit']:.1%}")
             m4.metric("P(ação ótima)", f"{row['p_action_optimal']:.1%}")
@@ -736,6 +750,15 @@ def main():
             s2.metric("Mudança de regime", f"{row['regime_change_score']:.1%}")
             s3.metric("Instabilidade", f"{row['instability_score']:.1%}")
             s4.metric("Elasticidade resposta", f"{row['response_elasticity']:.3f}")
+            if (
+                float(row.get("instability_score", 0.0)) >= 0.80
+                or float(row.get("decision_score", 1.0)) < 0.40
+            ):
+                st.warning(
+                    "O cenário macro da conta está em regime altamente instável "
+                    "ou com score decisório baixo. Ele é tratado como sinal de "
+                    "risco e não como ordem para zerar/escalar todo o portfólio."
+                )
 
         display_cols = [
             "level",
