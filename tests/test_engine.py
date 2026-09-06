@@ -114,11 +114,11 @@ def test_low_quality_data_blocks_scale_up_policy():
             "campaign_id": "c1",
             "adset_id": "s1",
             "ad_id": "a1",
-            "impressions": 0,
-            "clicks": 0,
-            "conversions": 0,
-            "spend": 0,
-            "revenue": 0,
+            "impressions": 1000,
+            "clicks": 50,
+            "conversions": 5,
+            "spend": 100,
+            "revenue": 800,
         },
     ]
     engine = BayesTrafficEngine(
