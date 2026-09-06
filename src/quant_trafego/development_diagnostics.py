@@ -17,6 +17,160 @@ def _counts(series: pd.Series | None) -> dict[str, int]:
     }
 
 
+def _recent_economic_snapshot(
+    df: pd.DataFrame,
+    *,
+    contribution_margin: float,
+    recent_days: int = 7,
+) -> dict[str, Any]:
+    if df.empty:
+        return {}
+
+    work = df.copy()
+    work["date"] = pd.to_datetime(
+        work["date"],
+        errors="coerce",
+    )
+    for column in [
+        "spend",
+        "revenue",
+        "conversions",
+    ]:
+        work[column] = pd.to_numeric(
+            work[column],
+            errors="coerce",
+        ).fillna(0.0)
+
+    latest = work["date"].max()
+    if pd.isna(latest):
+        return {}
+
+    cutoff = latest - pd.Timedelta(
+        days=max(int(recent_days), 1) - 1
+    )
+    recent = work[
+        work["date"] >= cutoff
+    ].copy()
+    if recent.empty:
+        return {}
+
+    spend = float(recent["spend"].sum())
+    revenue = float(recent["revenue"].sum())
+    profit = float(
+        revenue * float(contribution_margin)
+        - spend
+    )
+    roas = (
+        float(revenue / spend)
+        if spend > 0
+        else None
+    )
+    breakeven_roas = (
+        float(1.0 / contribution_margin)
+        if contribution_margin > 0
+        else None
+    )
+
+    campaign = (
+        recent.groupby(
+            "campaign_id",
+            as_index=False,
+        )
+        .agg(
+            spend=("spend", "sum"),
+            revenue=("revenue", "sum"),
+            conversions=("conversions", "sum"),
+        )
+    )
+    campaign["contribution_profit"] = (
+        campaign["revenue"]
+        * float(contribution_margin)
+        - campaign["spend"]
+    )
+    campaign["roas"] = np.divide(
+        campaign["revenue"],
+        campaign["spend"],
+        out=np.full(
+            len(campaign),
+            np.nan,
+            dtype=float,
+        ),
+        where=campaign["spend"].to_numpy(dtype=float) > 0,
+    )
+
+    profitable = campaign[
+        campaign["contribution_profit"] > 0
+    ]
+    negative = campaign[
+        campaign["contribution_profit"] < 0
+    ]
+
+    return {
+        "recent_days": int(recent_days),
+        "latest_date": str(
+            pd.Timestamp(latest).date()
+        ),
+        "spend": spend,
+        "revenue": revenue,
+        "contribution_profit": profit,
+        "roas": roas,
+        "breakeven_roas": breakeven_roas,
+        "conversions": float(
+            recent["conversions"].sum()
+        ),
+        "campaigns_profitable": int(
+            len(profitable)
+        ),
+        "campaigns_negative": int(
+            len(negative)
+        ),
+        "profitable_campaign_profit_sum": float(
+            profitable["contribution_profit"].sum()
+        ),
+        "negative_campaign_profit_sum": float(
+            negative["contribution_profit"].sum()
+        ),
+        "top_profitable_campaigns": (
+            profitable.sort_values(
+                "contribution_profit",
+                ascending=False,
+            )
+            .head(5)[
+                [
+                    "campaign_id",
+                    "spend",
+                    "revenue",
+                    "conversions",
+                    "contribution_profit",
+                    "roas",
+                ]
+            ]
+            .to_dict(
+                orient="records"
+            )
+        ),
+        "worst_campaigns": (
+            negative.sort_values(
+                "contribution_profit",
+                ascending=True,
+            )
+            .head(5)[
+                [
+                    "campaign_id",
+                    "spend",
+                    "revenue",
+                    "conversions",
+                    "contribution_profit",
+                    "roas",
+                ]
+            ]
+            .to_dict(
+                orient="records"
+            )
+        ),
+    }
+
+
 def build_development_diagnostics(
     *,
     full_df: pd.DataFrame,
@@ -89,6 +243,55 @@ def build_development_diagnostics(
         1e-9,
     )
 
+    recent_economics = _recent_economic_snapshot(
+        operational_df,
+        contribution_margin=float(
+            config.contribution_margin
+        ),
+        recent_days=int(
+            getattr(
+                config,
+                "action_baseline_recent_days",
+                7,
+            )
+        ),
+    )
+    allocation_selected_spend = (
+        float(
+            allocation_summary.get(
+                "selected_spend",
+                np.nan,
+            )
+        )
+        if allocation_summary
+        else np.nan
+    )
+    recent_profitable_campaigns = int(
+        recent_economics.get(
+            "campaigns_profitable",
+            0,
+        )
+    )
+    zero_portfolio_despite_recent_winners = bool(
+        np.isfinite(
+            allocation_selected_spend
+        )
+        and allocation_selected_spend <= 1e-9
+        and recent_profitable_campaigns > 0
+    )
+    hard_pause_guardrail_triggers = int(
+        actions.get(
+            "hard_pause_guardrail_triggered",
+            pd.Series(
+                False,
+                index=actions.index,
+            ),
+        )
+        .fillna(False)
+        .astype(bool)
+        .sum()
+    )
+
     return {
         "purpose": (
             "Development-only diagnostics. Not an additional decision signal."
@@ -106,6 +309,7 @@ def build_development_diagnostics(
             "quality_score": float(quality.score),
             "quality_warnings": list(quality.warnings),
         },
+        "actual_recent_economics": recent_economics,
         "configuration": {
             "inference_mode": inference_mode,
             "draws": int(config.draws),
@@ -149,6 +353,7 @@ def build_development_diagnostics(
                 else 0.0
             ),
             "scale_selected_count": int(scale.sum()),
+            "hard_pause_guardrail_trigger_count": hard_pause_guardrail_triggers,
             "median_response_confidence": (
                 float(np.median(response_confidence))
                 if len(response_confidence)
@@ -158,6 +363,22 @@ def build_development_diagnostics(
                 float(np.median(decision_score))
                 if len(decision_score)
                 else None
+            ),
+        },
+        "sanity_checks": {
+            "zero_portfolio_despite_recent_profitable_campaigns": (
+                zero_portfolio_despite_recent_winners
+            ),
+            "recent_profitable_campaigns": recent_profitable_campaigns,
+            "allocation_selected_spend": (
+                None
+                if not np.isfinite(
+                    allocation_selected_spend
+                )
+                else allocation_selected_spend
+            ),
+            "requires_manual_review": bool(
+                zero_portfolio_despite_recent_winners
             ),
         },
         "validation": {
