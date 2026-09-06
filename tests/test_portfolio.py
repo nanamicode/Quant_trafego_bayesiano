@@ -182,3 +182,105 @@ def test_portfolio_uses_revenue_only_as_near_optimal_tiebreak():
     )
     assert selected.iloc[0]["action_multiplier"] == 1.2
     assert summary["expected_portfolio_revenue"] == 900.0
+
+
+def test_cvar_portfolio_does_not_collapse_to_zero_when_one_campaign_is_profitable():
+    actions = pd.DataFrame(
+        [
+            {
+                "level": "campaign",
+                "entity_id": "winner",
+                "action_multiplier": 0.0,
+                "expected_spend": 0.0,
+                "expected_profit": 0.0,
+                "expected_revenue": 0.0,
+                "profit_p05": 0.0,
+                "profit_p50": 0.0,
+                "profit_p95": 0.0,
+                "p_profit": 0.0,
+                "p_incremental_profit_positive": 0.0,
+                "response_confidence": 0.0,
+                "policy_eligible": True,
+            },
+            {
+                "level": "campaign",
+                "entity_id": "winner",
+                "action_multiplier": 1.0,
+                "expected_spend": 100.0,
+                "expected_profit": 50.0,
+                "expected_revenue": 200.0,
+                "profit_p05": 30.0,
+                "profit_p50": 50.0,
+                "profit_p95": 70.0,
+                "p_profit": 0.95,
+                "p_incremental_profit_positive": 0.5,
+                "response_confidence": 0.0,
+                "policy_eligible": True,
+            },
+            {
+                "level": "campaign",
+                "entity_id": "loser",
+                "action_multiplier": 0.0,
+                "expected_spend": 0.0,
+                "expected_profit": 0.0,
+                "expected_revenue": 0.0,
+                "profit_p05": 0.0,
+                "profit_p50": 0.0,
+                "profit_p95": 0.0,
+                "p_profit": 0.0,
+                "p_incremental_profit_positive": 0.9,
+                "response_confidence": 0.0,
+                "policy_eligible": True,
+            },
+            {
+                "level": "campaign",
+                "entity_id": "loser",
+                "action_multiplier": 1.0,
+                "expected_spend": 100.0,
+                "expected_profit": -40.0,
+                "expected_revenue": 60.0,
+                "profit_p05": -80.0,
+                "profit_p50": -40.0,
+                "profit_p95": -10.0,
+                "p_profit": 0.05,
+                "p_incremental_profit_positive": 0.5,
+                "response_confidence": 0.0,
+                "policy_eligible": True,
+            },
+        ]
+    )
+    history = pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp("2026-01-01") + pd.Timedelta(days=day),
+                "campaign_id": campaign,
+                "spend": 100.0,
+                "revenue": revenue,
+            }
+            for day in range(30)
+            for campaign, revenue in [
+                ("winner", 180.0),
+                ("loser", 60.0),
+            ]
+        ]
+    )
+    selected, summary = optimize_campaign_portfolio(
+        actions,
+        history,
+        contribution_margin=1.0,
+        total_budget=200.0,
+        risk_config=PortfolioRiskConfig(
+            scenarios=200,
+            seed=17,
+            cvar_weight=0.25,
+        ),
+    )
+    chosen = dict(
+        zip(
+            selected["entity_id"],
+            selected["action_multiplier"],
+        )
+    )
+    assert chosen["winner"] == 1.0
+    assert chosen["loser"] == 0.0
+    assert summary["selected_spend"] == 100.0
